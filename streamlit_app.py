@@ -230,37 +230,41 @@ with st.container(border=True):
     ) or "c"
 
     if is_custom:
-        # ----- Custom parameter inputs (mirror the 4-metric layout) -----
-        w_col, p_col, i_col, c_col = st.columns(4)
-        with w_col:
-            width = st.number_input(
-                "Width (bits)",
-                min_value=1, max_value=64,
-                value=int(seed["width"]),
-                step=1,
-                help="CRC register width, 1-64 bits.",
-            )
-        with p_col:
-            poly_raw = st.text_input("Polynomial (hex)", value=hex(seed["poly"]))
-        with i_col:
-            init_raw = st.text_input("Init (hex)", value=hex(seed["init"]))
-        with c_col:
-            check_raw = st.text_input(
-                "Check (hex)",
-                value=hex(seed["check"]),
-                help='CRC of the ASCII bytes "123456789". Used by the generated self-test.',
-            )
-
-        flag_col, xor_col = st.columns(2)
+        # Left = stacked checkboxes; right = 3-up row (Width / Poly / Init)
+        # over 2-up row (Check / Xorout).
+        flag_col, numeric_col = st.columns([1, 4])
         with flag_col:
             refin = st.checkbox("Reflect input (refin)", value=bool(seed["refin"]))
             refout = st.checkbox("Reflect output (refout)", value=bool(seed["refout"]))
-        with xor_col:
-            xorout_raw = st.text_input("Xorout (hex)", value=hex(seed["xorout"]))
+        with numeric_col:
+            w_col, p_col, i_col = st.columns(3)
+            with w_col:
+                width = st.number_input(
+                    "Width (bits)",
+                    min_value=1, max_value=64,
+                    value=int(seed["width"]),
+                    step=1,
+                    help="CRC register width, 1-64 bits.",
+                )
+            with p_col:
+                poly_raw = st.text_input("Polynomial (hex)", value=hex(seed["poly"]))
+            with i_col:
+                init_raw = st.text_input("Init (hex)", value=hex(seed["init"]))
+
+            c_col, x_col = st.columns(2)
+            with c_col:
+                check_raw = st.text_input(
+                    "Check (hex)",
+                    value=hex(seed["check"]),
+                    help='CRC of the ASCII bytes "123456789". Used by the generated self-test.',
+                )
+            with x_col:
+                xorout_raw = st.text_input("Xorout (hex)", value=hex(seed["xorout"]))
 
         desc = st.text_input(
-            "Description (optional)",
-            value=f"Custom CRC-{width} (seeded from {st.session_state.last_catalogue_name})",
+            "Description",
+            value="custom",
+            help="Update this to be the name of the function called in the target code.",
         )
 
         # Validate every hex field; collect first error.
