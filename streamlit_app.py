@@ -230,36 +230,36 @@ with st.container(border=True):
     ) or "c"
 
     if is_custom:
-        # Left = stacked checkboxes; right = 3-up row (Width / Poly / Init)
-        # over 2-up row (Check / Xorout).
-        flag_col, numeric_col = st.columns([1, 4])
-        with flag_col:
+        # 4-column x 2-row grid so every cell has the same width.
+        # Row 1: Refin   | Width | Polynomial | Init
+        # Row 2: Refout  | Check | Xorout     | (empty)
+        r1c1, r1c2, r1c3, r1c4 = st.columns(4, vertical_alignment="bottom")
+        with r1c1:
             refin = st.checkbox("Reflect input (refin)", value=bool(seed["refin"]))
-            refout = st.checkbox("Reflect output (refout)", value=bool(seed["refout"]))
-        with numeric_col:
-            w_col, p_col, i_col = st.columns(3)
-            with w_col:
-                width = st.number_input(
-                    "Width (bits)",
-                    min_value=1, max_value=64,
-                    value=int(seed["width"]),
-                    step=1,
-                    help="CRC register width, 1-64 bits.",
-                )
-            with p_col:
-                poly_raw = st.text_input("Polynomial (hex)", value=hex(seed["poly"]))
-            with i_col:
-                init_raw = st.text_input("Init (hex)", value=hex(seed["init"]))
+        with r1c2:
+            width = st.number_input(
+                "Width (bits)",
+                min_value=1, max_value=64,
+                value=int(seed["width"]),
+                step=1,
+                help="CRC register width, 1-64 bits.",
+            )
+        with r1c3:
+            poly_raw = st.text_input("Polynomial (hex)", value=hex(seed["poly"]))
+        with r1c4:
+            init_raw = st.text_input("Init (hex)", value=hex(seed["init"]))
 
-            c_col, x_col = st.columns(2)
-            with c_col:
-                check_raw = st.text_input(
-                    "Check (hex)",
-                    value=hex(seed["check"]),
-                    help='CRC of the ASCII bytes "123456789". Used by the generated self-test.',
-                )
-            with x_col:
-                xorout_raw = st.text_input("Xorout (hex)", value=hex(seed["xorout"]))
+        r2c1, r2c2, r2c3, _empty = st.columns(4, vertical_alignment="bottom")
+        with r2c1:
+            refout = st.checkbox("Reflect output (refout)", value=bool(seed["refout"]))
+        with r2c2:
+            check_raw = st.text_input(
+                "Check (hex)",
+                value=hex(seed["check"]),
+                help='CRC of the ASCII bytes "123456789". Used by the generated self-test.',
+            )
+        with r2c3:
+            xorout_raw = st.text_input("Xorout (hex)", value=hex(seed["xorout"]))
 
         desc = st.text_input(
             "Description",
