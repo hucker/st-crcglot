@@ -137,6 +137,24 @@ st.markdown(
         letter-spacing: 0.02em;
     }
 
+    /* Custom-algorithm 4x2 input grid -- bordered cells matching the
+       metric tile look so the parameter region feels like a grid, not
+       floating widgets.  Empty cell (marked with .crc-grid-empty) opts
+       out so the bottom-right slot doesn't render as a phantom box. */
+    .st-key-custom-grid [data-testid="stColumn"] {
+        background: #FAFAFA;
+        border: 1px solid #E5E7EB;
+        border-radius: 10px;
+        padding: 0.6rem 0.85rem;
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
+    }
+    .st-key-custom-grid [data-testid="stColumn"]:has(.crc-grid-empty) {
+        background: transparent;
+        border: none;
+        box-shadow: none;
+        padding: 0;
+    }
+
     .crc-section {
         display: inline-block;
         padding: 0.15rem 0.6rem;
@@ -233,33 +251,39 @@ with st.container(border=True):
         # 4-column x 2-row grid so every cell has the same width.
         # Row 1: Refin   | Width | Polynomial | Init
         # Row 2: Refout  | Check | Xorout     | (empty)
-        r1c1, r1c2, r1c3, r1c4 = st.columns(4, vertical_alignment="bottom")
-        with r1c1:
-            refin = st.checkbox("Reflect input (refin)", value=bool(seed["refin"]))
-        with r1c2:
-            width = st.number_input(
-                "Width (bits)",
-                min_value=1, max_value=64,
-                value=int(seed["width"]),
-                step=1,
-                help="CRC register width, 1-64 bits.",
-            )
-        with r1c3:
-            poly_raw = st.text_input("Polynomial (hex)", value=hex(seed["poly"]))
-        with r1c4:
-            init_raw = st.text_input("Init (hex)", value=hex(seed["init"]))
+        with st.container(key="custom-grid"):
+            r1c1, r1c2, r1c3, r1c4 = st.columns(4, vertical_alignment="bottom")
+            with r1c1:
+                refin = st.checkbox("Reflect input (refin)", value=bool(seed["refin"]))
+            with r1c2:
+                width = st.number_input(
+                    "Width (bits)",
+                    min_value=1, max_value=64,
+                    value=int(seed["width"]),
+                    step=1,
+                    help="CRC register width, 1-64 bits.",
+                )
+            with r1c3:
+                poly_raw = st.text_input("Polynomial (hex)", value=hex(seed["poly"]))
+            with r1c4:
+                init_raw = st.text_input("Init (hex)", value=hex(seed["init"]))
 
-        r2c1, r2c2, r2c3, _empty = st.columns(4, vertical_alignment="bottom")
-        with r2c1:
-            refout = st.checkbox("Reflect output (refout)", value=bool(seed["refout"]))
-        with r2c2:
-            check_raw = st.text_input(
-                "Check (hex)",
-                value=hex(seed["check"]),
-                help='CRC of the ASCII bytes "123456789". Used by the generated self-test.',
-            )
-        with r2c3:
-            xorout_raw = st.text_input("Xorout (hex)", value=hex(seed["xorout"]))
+            r2c1, r2c2, r2c3, r2c4 = st.columns(4, vertical_alignment="bottom")
+            with r2c1:
+                refout = st.checkbox("Reflect output (refout)", value=bool(seed["refout"]))
+            with r2c2:
+                check_raw = st.text_input(
+                    "Check (hex)",
+                    value=hex(seed["check"]),
+                    help='CRC of the ASCII bytes "123456789". Used by the generated self-test.',
+                )
+            with r2c3:
+                xorout_raw = st.text_input("Xorout (hex)", value=hex(seed["xorout"]))
+            with r2c4:
+                st.markdown(
+                    '<div class="crc-grid-empty"></div>',
+                    unsafe_allow_html=True,
+                )
 
         desc = st.text_input(
             "Description",
