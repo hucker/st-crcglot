@@ -87,8 +87,8 @@ def parse_hex(raw: str, label: str, width: int) -> tuple[int | None, str | None]
 
 
 st.set_page_config(
-    page_title="crcglot",
-    page_icon="⚡",
+    page_title="CRC Function Generator",
+    page_icon="🛡️",
     layout="wide",
 )
 
@@ -194,7 +194,7 @@ st.markdown(
 st.markdown(
     """
 <div class="crc-hero">
-  <h1>⚡ CRC Function Generator</h1>
+  <h1>🛡️ CRC Function Generator</h1>
   <p class="crc-subtitle">
     Powered by <a href="https://github.com/hucker/crcglot" target="_blank">crcglot</a>
     &middot; <a href="https://pypi.org/project/crcglot/" target="_blank">PyPI</a>
