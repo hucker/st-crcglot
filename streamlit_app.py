@@ -1,8 +1,30 @@
 """Streamlit UI for crcglot -- generate CRC code in C, Python, Rust, or VHDL."""
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import streamlit as st
 from crcglot import CRC_CATALOGUE, GENERATORS, GENERATORS_FROM_ENTRY
+
+STATS_FILE = Path(__file__).resolve().parent / "crcglot_stats.json"
+
+
+def load_stats() -> dict[str, int]:
+    try:
+        raw = json.loads(STATS_FILE.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return {}
+    return {k: int(v) for k, v in raw.items() if isinstance(v, (int, float))}
+
+
+def bump_stats(lang: str) -> dict[str, int]:
+    stats = load_stats()
+    stats[lang] = stats.get(lang, 0) + 1
+    tmp = STATS_FILE.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(stats), encoding="utf-8")
+    tmp.replace(STATS_FILE)
+    return stats
 
 LANGUAGES: dict[str, tuple[str, str, str]] = {
     "c":      ("⚙️", "C / C++", "c"),
@@ -161,6 +183,35 @@ st.markdown(
         box-shadow: none;
         padding: 0;
     }
+
+    /* Per-language usage-counter pill row at the bottom of the page. */
+    .crc-stats {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 0.4rem;
+        padding-top: 0.6rem;
+    }
+    .crc-stats-total {
+        font-size: 0.78rem;
+        font-weight: 600;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: #FF6B35;
+        margin-right: 0.3rem;
+    }
+    .crc-stat-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.3rem;
+        padding: 0.15rem 0.6rem;
+        font-size: 0.82rem;
+        background: #FAFAFA;
+        border: 1px solid #E5E7EB;
+        border-radius: 999px;
+    }
+    .crc-stat-pill-zero { opacity: 0.45; }
+    .crc-stat-pill strong { color: #FF6B35; font-weight: 700; }
 
     .crc-section {
         display: inline-block;
@@ -394,6 +445,7 @@ if go:
     if result is None:
         st.error(f"Generator returned no output for {name!r}.")
         st.stop()
+    bump_stats(lang)
 
     with st.container(border=True):
         st.markdown('<span class="crc-section">Output</span>', unsafe_allow_html=True)
@@ -426,3 +478,22 @@ if go:
                 file_name=f"{symbol}.{ext}", mime="text/plain",
                 use_container_width=True, icon=":material/download:",
             )
+
+# ---------- Usage counter (always rendered) ----------
+st.divider()
+_stats = load_stats()
+_total = sum(_stats.values())
+_pills = "".join(
+    '<span class="crc-stat-pill{zero_cls}">{icon} {name} <strong>{count}</strong></span>'.format(
+        icon=icon, name=name, count=_stats.get(k, 0),
+        zero_cls=" crc-stat-pill-zero" if _stats.get(k, 0) == 0 else "",
+    )
+    for k, (icon, name, _ext) in LANGUAGES.items()
+)
+st.markdown(
+    f'<div class="crc-stats">'
+    f'<span class="crc-stats-total">{_total} generation{"" if _total == 1 else "s"}</span>'
+    f'{_pills}'
+    f'</div>',
+    unsafe_allow_html=True,
+)

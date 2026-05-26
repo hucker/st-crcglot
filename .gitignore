@@ -8,3 +8,6 @@ wheels/
 
 # Virtual environments
 .venv
+
+# Runtime usage counter -- ephemeral on Streamlit Cloud, not for VCS.
+crcglot_stats.json
