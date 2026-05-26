@@ -1,11 +1,12 @@
-"""Streamlit UI for crcglot -- generate CRC code in C, Python, Rust, or VHDL."""
+"""Streamlit UI for crcglot -- generate CRC code in any language crcglot ships."""
 from __future__ import annotations
 
 import json
+from dataclasses import asdict
 from pathlib import Path
 
 import streamlit as st
-from crcglot import CRC_CATALOGUE, GENERATORS, GENERATORS_FROM_ENTRY
+from crcglot import ALGORITHMS, LANGUAGES, AlgorithmInfo
 
 STATS_FILE = Path(__file__).resolve().parent / "crcglot_stats.json"
 
@@ -26,15 +27,25 @@ def bump_stats(lang: str) -> dict[str, int]:
     tmp.replace(STATS_FILE)
     return stats
 
-LANGUAGES: dict[str, tuple[str, str, str]] = {
-    "c":      ("⚙️", "C / C++", "c"),
-    "python": ("\U0001F40D",   "Python",  "py"),
-    "rust":   ("\U0001F980",   "Rust",    "rs"),
-    "vhdl":   ("\U0001F50C",   "VHDL",    "vhd"),
-    "csharp": ("\U0001F4A0",   "C#",      "cs"),
-    "go":     ("\U0001F6A6",   "Go",      "go"),
-    "zig":    ("⚡",       "Zig",     "zig"),
+# UI presentation only.  crcglot itself ships behavioral metadata
+# (extensions, variants, callables) but no icons or display names --
+# those are pure UI choices and live here.  Unknown keys fall back to
+# a neutral icon so a freshly-shipped crcglot language renders cleanly
+# until we add its icon.
+LANG_DISPLAY: dict[str, tuple[str, str]] = {  # code -> (icon, display)
+    "c":      ("⚙️", "C / C++"),
+    "csharp": ("\U0001F4A0", "C#"),
+    "go":     ("\U0001F6A6", "Go"),
+    "python": ("\U0001F40D", "Python"),
+    "rust":   ("\U0001F980", "Rust"),
+    "vhdl":   ("\U0001F50C", "VHDL"),
+    "zig":    ("⚡", "Zig"),
 }
+
+
+def lang_display(code: str) -> tuple[str, str]:
+    return LANG_DISPLAY.get(code, ("\U0001F4E6", code))
+
 
 VARIANTS: dict[str, tuple[str, str, str]] = {
     "bitwise": ("◯", "Bit-by-bit",   "Smallest; portable; one byte per 8 shifts."),
@@ -42,19 +53,17 @@ VARIANTS: dict[str, tuple[str, str, str]] = {
     "slice8":  ("▩", "Slice-by-8",   "8 LUTs; another 5-10x faster (32/64-bit CRCs only)."),
 }
 
+VARIANT_ORDER: tuple[str, ...] = ("bitwise", "table", "slice8")
+
 SENTINEL_CUSTOM = "__custom__"
 
 
-def available_variants(lang: str, width: int) -> list[str]:
-    # VHDL generator only emits bit-by-bit; its table= flag is a no-op.
-    if lang == "vhdl":
-        return ["bitwise"]
-    out = ["bitwise", "table"]
-    # Slice-by-8 is a high-throughput optimization that only makes sense
-    # at widths 32/64, in imperative languages with native integer types.
-    if lang in ("c", "rust", "csharp", "go", "zig") and width in (32, 64):
-        out.append("slice8")
-    return out
+def available_variants(code: str, width: int) -> list[str]:
+    supported = LANGUAGES[code].variants
+    return [
+        v for v in VARIANT_ORDER
+        if v in supported and not (v == "slice8" and width not in (32, 64))
+    ]
 
 
 def _kwargs_for_variant(variant: str) -> dict:
@@ -66,11 +75,13 @@ def _kwargs_for_variant(variant: str) -> dict:
 
 
 def generate_catalogue(lang: str, name: str, variant: str, symbol: str):
-    return GENERATORS[lang](name, symbol=symbol or None, **_kwargs_for_variant(variant))
+    return LANGUAGES[lang].generator(
+        name, symbol=symbol or None, **_kwargs_for_variant(variant),
+    )
 
 
-def generate_custom(lang: str, name: str, entry: dict, variant: str, symbol: str):
-    return GENERATORS_FROM_ENTRY[lang](
+def generate_custom(lang: str, name: str, entry: AlgorithmInfo, variant: str, symbol: str):
+    return LANGUAGES[lang].generator_from_entry(
         name, entry, symbol=symbol or None, **_kwargs_for_variant(variant),
     )
 
@@ -82,14 +93,12 @@ def default_symbol(name: str) -> str:
 def alg_label(name: str) -> str:
     if name == SENTINEL_CUSTOM:
         return "✏️  Custom — enter your own parameters"
-    w = CRC_CATALOGUE[name]["width"]
+    w = ALGORITHMS[name].width
     return f"CRC-{w:<2}  ·  {name}"
 
 
 def lang_label(k: str) -> str:
-    icon, name, _ = LANGUAGES[k]
-    if k not in GENERATORS:
-        return f"{icon}  {name}  · soon"
+    icon, name = lang_display(k)
     return f"{icon}  {name}"
 
 
@@ -265,7 +274,7 @@ st.markdown(
 # Sort: width ascending, then name ascending.  Groups crc8 -> 16 -> 32 -> 64.
 # Custom sentinel pinned to the top.
 catalogue_names = sorted(
-    CRC_CATALOGUE, key=lambda n: (CRC_CATALOGUE[n]["width"], n),
+    ALGORITHMS, key=lambda n: (ALGORITHMS[n].width, n),
 )
 names = [SENTINEL_CUSTOM] + catalogue_names
 
@@ -287,11 +296,10 @@ with st.container(border=True):
 
     if not is_custom:
         st.session_state.last_catalogue_name = name
-        entry = dict(CRC_CATALOGUE[name])
-        width = entry["width"]
+        width = ALGORITHMS[name].width
         custom_error: str | None = None
     else:
-        seed = CRC_CATALOGUE[st.session_state.last_catalogue_name]
+        seed = ALGORITHMS[st.session_state.last_catalogue_name]
         st.caption(
             f"Editing custom parameters — seeded from "
             f"`{st.session_state.last_catalogue_name}`. "
@@ -312,31 +320,31 @@ with st.container(border=True):
         with st.container(key="custom-grid"):
             r1c1, r1c2, r1c3, r1c4 = st.columns(4, vertical_alignment="bottom")
             with r1c1:
-                refin = st.checkbox("Reflect input (refin)", value=bool(seed["refin"]))
+                refin = st.checkbox("Reflect input (refin)", value=seed.refin)
             with r1c2:
                 width = st.number_input(
                     "Width (bits)",
                     min_value=1, max_value=64,
-                    value=int(seed["width"]),
+                    value=int(seed.width),
                     step=1,
                     help="CRC register width, 1-64 bits.",
                 )
             with r1c3:
-                poly_raw = st.text_input("Polynomial (hex)", value=hex(seed["poly"]))
+                poly_raw = st.text_input("Polynomial (hex)", value=hex(seed.poly))
             with r1c4:
-                init_raw = st.text_input("Init (hex)", value=hex(seed["init"]))
+                init_raw = st.text_input("Init (hex)", value=hex(seed.init))
 
             r2c1, r2c2, r2c3, r2c4 = st.columns(4, vertical_alignment="bottom")
             with r2c1:
-                refout = st.checkbox("Reflect output (refout)", value=bool(seed["refout"]))
+                refout = st.checkbox("Reflect output (refout)", value=seed.refout)
             with r2c2:
                 check_raw = st.text_input(
                     "Check (hex)",
-                    value=hex(seed["check"]),
+                    value=hex(seed.check),
                     help='CRC of the ASCII bytes "123456789". Used by the generated self-test.',
                 )
             with r2c3:
-                xorout_raw = st.text_input("Xorout (hex)", value=hex(seed["xorout"]))
+                xorout_raw = st.text_input("Xorout (hex)", value=hex(seed.xorout))
             with r2c4:
                 st.markdown(
                     '<div class="crc-grid-empty"></div>',
@@ -359,15 +367,17 @@ with st.container(border=True):
             if err and not custom_error:
                 custom_error = err
 
+        entry: AlgorithmInfo | None
         if custom_error:
             st.error(custom_error)
-            entry = {}
+            entry = None
         else:
-            entry = {
-                "width": int(width), "poly": poly, "init": init,
-                "refin": refin, "refout": refout,
-                "xorout": xorout, "check": check, "desc": desc,
-            }
+            entry = AlgorithmInfo(
+                name=desc or "custom", width=int(width),
+                poly=poly, init=init,
+                refin=refin, refout=refout,
+                xorout=xorout, check=check, desc=desc,
+            )
 
     variants = available_variants(lang, int(width))
     variant = st.segmented_control(
@@ -387,18 +397,18 @@ with st.container(border=True):
     st.caption(VARIANTS[variant][2])
 
     if not is_custom:
-        cat = CRC_CATALOGUE[name]
+        cat = ALGORITHMS[name]
         st.divider()
         m1, m2, m3, m4 = st.columns(4)
-        m1.metric("Width",      f"{cat['width']} bits")
-        m2.metric("Polynomial", hex(cat["poly"]))
-        m3.metric("Init",       hex(cat["init"]))
-        m4.metric("Check",      hex(cat["check"]))
+        m1.metric("Width",      f"{cat.width} bits")
+        m2.metric("Polynomial", hex(cat.poly))
+        m3.metric("Init",       hex(cat.init))
+        m4.metric("Check",      hex(cat.check))
 
         with st.expander("All parameters (reflect / xorout / description)"):
             st.json({
                 k: (hex(v) if isinstance(v, int) and k != "width" else v)
-                for k, v in cat.items()
+                for k, v in asdict(cat).items()
             })
 
 with st.container(border=True):
@@ -412,25 +422,16 @@ with st.container(border=True):
             value=default_sym,
             help="Used as the generated function name; for C, also the .c / .h basename.",
         )
-    lang_unavailable = lang not in GENERATORS
     with btn_col:
         go = st.button(
             "Generate code",
             type="primary",
             disabled=(
                 (not symbol.strip())
-                or lang_unavailable
                 or (is_custom and custom_error is not None)
             ),
             use_container_width=True,
             icon=":material/play_arrow:",
-        )
-
-    if lang_unavailable:
-        st.info(
-            f"**{LANGUAGES[lang][1]}** support is on the way in the next "
-            f"`crcglot` release. The UI is wired up and ready; selecting the "
-            f"language today previews the picker but cannot generate code yet."
         )
 
 if go:
@@ -450,46 +451,37 @@ if go:
     with st.container(border=True):
         st.markdown('<span class="crc-section">Output</span>', unsafe_allow_html=True)
 
-        if lang == "c":
-            header, source = result
-            h_col, c_col = st.columns(2)
-            with h_col:
-                st.markdown(f"**\U0001F4C4 `{symbol}.h`**  ·  *{len(header):,} bytes*")
-                st.code(header, language="c", line_numbers=True)
+        # Multi-file languages (today: C with .h/.c) return a tuple; single-
+        # file languages return a string.  Normalize and render one pane per
+        # extension declared by crcglot.
+        extensions = LANGUAGES[lang].extensions
+        files = result if isinstance(result, tuple) else (result,)
+        cols = st.columns(len(extensions)) if len(extensions) > 1 else (st.container(),)
+        for col, ext, content in zip(cols, extensions, files):
+            with col:
+                fname = f"{symbol}{ext}"
+                st.markdown(f"**\U0001F4C4 `{fname}`**  ·  *{len(content):,} bytes*")
+                st.code(content, language=lang, line_numbers=True)
                 st.download_button(
-                    "Download .h", header,
-                    file_name=f"{symbol}.h", mime="text/x-c",
+                    f"Download {ext}", content,
+                    file_name=fname, mime="text/plain",
                     use_container_width=True, icon=":material/download:",
                 )
-            with c_col:
-                st.markdown(f"**\U0001F4C4 `{symbol}.c`**  ·  *{len(source):,} bytes*")
-                st.code(source, language="c", line_numbers=True)
-                st.download_button(
-                    "Download .c", source,
-                    file_name=f"{symbol}.c", mime="text/x-c",
-                    use_container_width=True, icon=":material/download:",
-                )
-        else:
-            _, _, ext = LANGUAGES[lang]
-            st.markdown(f"**\U0001F4C4 `{symbol}.{ext}`**  ·  *{len(result):,} bytes*")
-            st.code(result, language=lang, line_numbers=True)
-            st.download_button(
-                f"Download .{ext}", result,
-                file_name=f"{symbol}.{ext}", mime="text/plain",
-                use_container_width=True, icon=":material/download:",
-            )
 
 # ---------- Usage counter (always rendered) ----------
 st.divider()
 _stats = load_stats()
 _total = sum(_stats.values())
-_pills = "".join(
-    '<span class="crc-stat-pill{zero_cls}">{icon} {name} <strong>{count}</strong></span>'.format(
-        icon=icon, name=name, count=_stats.get(k, 0),
-        zero_cls=" crc-stat-pill-zero" if _stats.get(k, 0) == 0 else "",
+def _stat_pill(code: str) -> str:
+    icon, name = lang_display(code)
+    count = _stats.get(code, 0)
+    zero_cls = " crc-stat-pill-zero" if count == 0 else ""
+    return (
+        f'<span class="crc-stat-pill{zero_cls}">'
+        f'{icon} {name} <strong>{count}</strong></span>'
     )
-    for k, (icon, name, _ext) in LANGUAGES.items()
-)
+
+_pills = "".join(_stat_pill(code) for code in LANGUAGES)
 st.markdown(
     f'<div class="crc-stats">'
     f'<span class="crc-stats-total">{_total} generation{"" if _total == 1 else "s"}</span>'
