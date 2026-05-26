@@ -9,6 +9,9 @@ LANGUAGES: dict[str, tuple[str, str, str]] = {
     "python": ("\U0001F40D",   "Python",  "py"),
     "rust":   ("\U0001F980",   "Rust",    "rs"),
     "vhdl":   ("\U0001F50C",   "VHDL",    "vhd"),
+    "csharp": ("\U0001F4A0",   "C#",      "cs"),
+    "go":     ("\U0001F6A6",   "Go",      "go"),
+    "zig":    ("⚡",       "Zig",     "zig"),
 }
 
 VARIANTS: dict[str, tuple[str, str, str]] = {
@@ -25,7 +28,9 @@ def available_variants(lang: str, width: int) -> list[str]:
     if lang == "vhdl":
         return ["bitwise"]
     out = ["bitwise", "table"]
-    if lang in ("c", "rust") and width in (32, 64):
+    # Slice-by-8 is a high-throughput optimization that only makes sense
+    # at widths 32/64, in imperative languages with native integer types.
+    if lang in ("c", "rust", "csharp", "go", "zig") and width in (32, 64):
         out.append("slice8")
     return out
 
@@ -61,6 +66,8 @@ def alg_label(name: str) -> str:
 
 def lang_label(k: str) -> str:
     icon, name, _ = LANGUAGES[k]
+    if k not in GENERATORS:
+        return f"{icon}  {name}  · soon"
     return f"{icon}  {name}"
 
 
@@ -354,13 +361,25 @@ with st.container(border=True):
             value=default_sym,
             help="Used as the generated function name; for C, also the .c / .h basename.",
         )
+    lang_unavailable = lang not in GENERATORS
     with btn_col:
         go = st.button(
             "Generate code",
             type="primary",
-            disabled=(not symbol.strip()) or (is_custom and custom_error is not None),
+            disabled=(
+                (not symbol.strip())
+                or lang_unavailable
+                or (is_custom and custom_error is not None)
+            ),
             use_container_width=True,
             icon=":material/play_arrow:",
+        )
+
+    if lang_unavailable:
+        st.info(
+            f"**{LANGUAGES[lang][1]}** support is on the way in the next "
+            f"`crcglot` release. The UI is wired up and ready; selecting the "
+            f"language today previews the picker but cannot generate code yet."
         )
 
 if go:
