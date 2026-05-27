@@ -11,8 +11,6 @@ implementation details of the tab bodies.
 """
 from __future__ import annotations
 
-from dataclasses import asdict
-
 import streamlit as st
 
 from crc_lib import (
@@ -317,11 +315,20 @@ def render_standard_picker(key_prefix: str) -> tuple[str, AlgorithmInfo, int]:
     st.session_state[state_key] = name
     entry = ALGORITHMS[name]
 
-    with st.expander("All parameters"):
-        st.json({
-            k: (f"0x{v:X}" if isinstance(v, int) and k != "width" else v)
-            for k, v in asdict(entry).items()
-        })
+    # Vertically-efficient parameter dump: 4-column markdown table laying
+    # out 6 short fields as 3 label/value pairs per row, with description
+    # below as a caption.  Replaces the previous st.expander + st.json --
+    # always visible (it's small), uses native markdown rendering.
+    st.markdown(
+        "|  |  |  |  |\n"
+        "|---|---|---|---|\n"
+        f"| **Width** | {entry.width} bits | **Polynomial** | `0x{entry.poly:X}` |\n"
+        f"| **Init** | `0x{entry.init:X}` | **Check** | `0x{entry.check:X}` |\n"
+        f"| **Xorout** | `0x{entry.xorout:X}` | **Reflect** | "
+        f"in=`{entry.refin}`, out=`{entry.refout}` |\n"
+    )
+    if entry.desc:
+        st.caption(f"_{entry.desc}_")
 
     return name, entry, entry.width
 
@@ -528,10 +535,10 @@ def render_test_vector_display(
             unsafe_allow_html=True,
         )
         st.caption(
-            "Computed live from your parameters by crcglot's verified "
-            "engine.  The ✓/✗ badge compares it to the **Check** value "
-            "you typed; if it matches now, the `*_self_test()` function "
-            "baked into the generated code will pass after compilation."
+            "Computed live from your parameters by `crcglot`.  The ✓/✗ "
+            "badge compares it to the **Check** value you typed; if it "
+            "matches now, the `*_self_test()` function baked into the "
+            "generated code will pass after compilation."
         )
     else:
         st.markdown(
@@ -542,10 +549,13 @@ def render_test_vector_display(
         st.caption(
             "This is the algorithm's published **check** value from the "
             "[reveng catalogue](https://reveng.sourceforge.io/crc-catalogue/all.htm).  "
-            "crcglot's code generators are independently verified to "
-            "produce it, and the generated code includes a "
-            "`*_self_test()` function that re-checks the same value at "
-            "runtime — after your target compiler builds it."
+            "crcglot's test suite generates code in every supported "
+            "language for every algorithm, compiles and runs it, and "
+            "asserts the output equals this exact value — so the emitter "
+            "you're about to use is covered by an end-to-end test.  The "
+            "generated code also includes a `*_self_test()` function "
+            "that re-checks the same value at runtime, after your "
+            "target compiler builds it."
         )
 
 
@@ -612,7 +622,13 @@ def render_generate_section(
         key=f"{key_prefix}_variant_picker",
         help=f"{_variant_name}: {_variant_desc}",
     ) or variants[0]
-    st.caption(VARIANTS[variant][2])
+    st.caption(
+        f"{VARIANTS[variant][2]}  "
+        "Speed-up figures are rough — see "
+        "[crcglot's BENCHMARKS.md]"
+        "(https://github.com/hucker/crcglot/blob/main/BENCHMARKS.md) "
+        "for measured numbers."
+    )
 
     sym_col, btn_col = st.columns([3, 1], vertical_alignment="bottom")
     default_sym = "custom_crc" if is_custom else default_symbol(name)
@@ -658,7 +674,7 @@ def render_generate_section(
 
         with st.container(border=True):
             st.markdown(
-                f'<span class="crc-section">{LANGUAGES[lang].display_name} Output</span>',
+                f'<span class="crc-section">View {LANGUAGES[lang].display_name} Output</span>',
                 unsafe_allow_html=True,
             )
             extensions = LANGUAGES[lang].extensions
@@ -813,7 +829,7 @@ def render_calculate_section(
     bump_stats(CALC_KEY)
 
     with st.container(border=True):
-        st.markdown('<span class="crc-section">Result</span>', unsafe_allow_html=True)
+        st.markdown('<span class="crc-section">View Result</span>', unsafe_allow_html=True)
         st.markdown(
             f"**\U0001F9EE Computed CRC**  ·  `{entry.name}`  ·  "
             f'*{len(data):,} byte{"" if len(data) == 1 else "s"} input '
@@ -842,6 +858,89 @@ def render_calculate_section(
 
 # ---------- Tab bodies ----------
 
+def render_faq_tab() -> None:
+    """Render the body of the FAQ / overview tab.
+
+    A short orientation page covering what CRC101 does, why the output
+    can be trusted, when to use which other tab, and the size-vs-speed
+    implementation variants.  Pure markdown -- no widgets, no escape
+    hatches.
+    """
+    with st.container(border=True):
+        st.markdown(
+            """
+### What CRC101 does
+
+- **Generate CRC code** in C, C#, Go, Python, Rust, TypeScript,
+  Verilog, or VHDL — for any of 71 catalog algorithms or a custom
+  polynomial you define.
+- **Calculate a CRC** over your own bytes (text or hex), with
+  optional verification against the canonical check value.
+- **Reverse-lookup** a captured CRC: paste the payload + its trailing
+  CRC and find which algorithm produced it.
+
+### Why you can trust the output
+
+- The 71 algorithms come from **Greg Cook's
+  [reveng catalogue](https://reveng.sourceforge.io/crc-catalogue/all.htm)**,
+  the de-facto industry reference.  Each entry has a published `check`
+  value — the CRC of the ASCII bytes `"123456789"`.
+- The underlying library
+  [`crcglot`](https://github.com/hucker/crcglot) is **end-to-end
+  self-tested against the catalogue**: for every supported language
+  × every algorithm, the test suite generates the code, compiles and
+  runs it, and asserts the produced CRC equals the catalogue's
+  `check` value.  Same author wrote the emitter and the test — but
+  the assertion target (the `check` value) is the external reveng
+  reference, not something we made up.
+- On the Code Gen pages the test-vector CRC is shown automatically so
+  you can sanity-check it against the catalogue before generating code.
+- The **generated code includes a `*_self_test()` function** that
+  re-asserts the check at runtime, after your target compiler builds it.
+
+### When to use which tab
+
+- **⚡ Catalog Code Gen** — generate catalogue-tested CRC source for a
+  named standard algorithm in your target language.
+- **⚡ Custom Code Gen** — design your own CRC (custom polynomial +
+  init / refin / refout / xorout / check) and emit code using the
+  same emitter the catalogue tests cover.
+- **🧮 Catalog Calc** — calculate the CRC of arbitrary bytes for a
+  standard algorithm, with optional verify against the catalogue check.
+- **🧮 Custom Calc** — calculate the CRC for your own custom parameters.
+- **🔍 Reverse Lookup** — given a captured packet and its trailing CRC,
+  find which catalog algorithm produced it.  Handles big/little
+  endianness, optional `0x` prefix on the CRC, trailing whitespace, etc.
+
+### Size vs speed
+
+Most languages let you pick the implementation variant:
+
+- **◯ Bit-by-bit** — smallest code; ~8 ops per byte.  Use for
+  size-constrained targets.
+- **▦ Table-driven** — 256-entry LUT; expect roughly **2-4× faster**
+  than bit-by-bit in practice.  Best general-purpose choice.
+- **▩ Slice-by-8** — 8 LUTs; expect another roughly **2-4× faster**
+  on top of table-driven (CRC-32 / CRC-64 only).  Best for
+  high-throughput.
+
+Numbers depend on target language, compiler, CPU, and input size --
+see crcglot's
+[BENCHMARKS.md](https://github.com/hucker/crcglot/blob/main/BENCHMARKS.md)
+for measured figures.
+
+VHDL and Verilog emit bit-by-bit only (the table variants don't map
+cleanly onto an HDL register-transfer description).
+
+---
+
+Powered by [`crcglot`](https://github.com/hucker/crcglot) (the library)
+and [reveng](https://reveng.sourceforge.io/crc-catalogue/all.htm)
+(the catalogue).
+            """
+        )
+
+
 def render_calc_tab(picker_kind: str, key_prefix: str, allow_verify: bool) -> None:
     """Render the body of a Calculate tab (Catalog or Custom).
 
@@ -859,11 +958,11 @@ def render_calc_tab(picker_kind: str, key_prefix: str, allow_verify: bool) -> No
     """
     with st.container(border=True):
         if picker_kind == "catalog":
-            st.markdown('<span class="crc-section">Algorithm</span>', unsafe_allow_html=True)
+            st.markdown('<span class="crc-section">Select Algorithm</span>', unsafe_allow_html=True)
             _, entry, _ = render_standard_picker(key_prefix)
             custom_error = None
         else:
-            st.markdown('<span class="crc-section">Parameters</span>', unsafe_allow_html=True)
+            st.markdown('<span class="crc-section">Select Parameters</span>', unsafe_allow_html=True)
             entry, _, custom_error = render_custom_picker(key_prefix)
 
     with st.container(border=True):
@@ -899,11 +998,11 @@ def render_gen_tab(picker_kind: str, key_prefix: str, is_custom: bool) -> None:
     """
     with st.container(border=True):
         if picker_kind == "catalog":
-            st.markdown('<span class="crc-section">Algorithm</span>', unsafe_allow_html=True)
+            st.markdown('<span class="crc-section">Select Algorithm</span>', unsafe_allow_html=True)
             name, entry, width = render_standard_picker(key_prefix)
             custom_error = None
         else:
-            st.markdown('<span class="crc-section">Parameters</span>', unsafe_allow_html=True)
+            st.markdown('<span class="crc-section">Select Parameters</span>', unsafe_allow_html=True)
             entry, width, custom_error = render_custom_picker(key_prefix)
             name = SENTINEL_CUSTOM
         render_test_vector_display(entry, is_custom=is_custom)
@@ -1271,7 +1370,7 @@ def render_reverse_tab() -> None:
     bump_stats(REVERSE_KEY)
 
     with st.container(border=True):
-        st.markdown('<span class="crc-section">Result</span>', unsafe_allow_html=True)
+        st.markdown('<span class="crc-section">View Result</span>', unsafe_allow_html=True)
 
         if matches:
             plural = "es" if len(matches) != 1 else ""

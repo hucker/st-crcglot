@@ -11,6 +11,7 @@ import streamlit as st
 from ui import (
     inject_css,
     render_calc_tab,
+    render_faq_tab,
     render_footer,
     render_gen_tab,
     render_hero,
@@ -30,13 +31,17 @@ inject_css()
 render_hero()
 
 
-tab_cat_gen, tab_cust_gen, tab_cat_calc, tab_cust_calc, tab_reverse = st.tabs([
+tab_faq, tab_cat_gen, tab_cust_gen, tab_cat_calc, tab_cust_calc, tab_reverse = st.tabs([
+    "ℹ️ Show FAQ",
     "⚡ Catalog Code Gen",
     "⚡ Custom Code Gen",
     "🧮 Catalog Calc",
     "🧮 Custom Calc",
     "🔍 Reverse Lookup",
 ])
+
+with tab_faq:
+    render_faq_tab()
 
 with tab_cat_gen:
     render_gen_tab(picker_kind="catalog", key_prefix="cat_gen", is_custom=False)

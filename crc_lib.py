@@ -70,8 +70,8 @@ SENTINEL_CUSTOM = "__custom__"  # passed as `name` when generating from custom p
 
 VARIANTS: dict[str, tuple[str, str, str]] = {
     "bitwise": ("◯", "Bit-by-bit",   "Smallest; portable; one byte per 8 shifts."),
-    "table":   ("▦", "Table-driven", "256-entry LUT; 4-8x faster than bit-by-bit."),
-    "slice8":  ("▩", "Slice-by-8",   "8 LUTs; another 5-10x faster (32/64-bit CRCs only)."),
+    "table":   ("▦", "Table-driven", "256-entry LUT; ~2-4x faster than bit-by-bit."),
+    "slice8":  ("▩", "Slice-by-8",   "8 LUTs; another ~2-4x faster (32/64-bit CRCs only)."),
 }
 VARIANT_ORDER: tuple[str, ...] = ("bitwise", "table", "slice8")
 
