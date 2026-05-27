@@ -137,13 +137,7 @@ def render_standard_picker(key_prefix: str) -> tuple[str, AlgorithmInfo, int]:
     st.session_state[state_key] = name
     entry = ALGORITHMS[name]
 
-    st.divider()
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Width",      f"{entry.width} bits")
-    m2.metric("Polynomial", hex(entry.poly))
-    m3.metric("Init",       hex(entry.init))
-    m4.metric("Check",      hex(entry.check))
-    with st.expander("All parameters (reflect / xorout / description)"):
+    with st.expander("All parameters"):
         st.json({
             k: (hex(v) if isinstance(v, int) and k != "width" else v)
             for k, v in asdict(entry).items()
