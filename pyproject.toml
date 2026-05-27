@@ -1,6 +1,6 @@
 [project]
 name = "st-crcglot"
-version = "0.1.0"
+version = "0.2.0"
 description = "Streamlit UI for crcglot — multi-language CRC code generator."
 readme = "README.md"
 requires-python = ">=3.14"
