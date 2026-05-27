@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import functools
 import json
+import os
 import re
 import subprocess
 import tomllib
@@ -158,16 +159,38 @@ def git_revision() -> str:
 
 
 # ---------- Stats I/O ----------
+#
+# Counters can live in one of two backends:
+#
+# 1. Upstash Redis (production / Streamlit Community Cloud) -- set the
+#    UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN env vars (Streamlit
+#    Cloud reads these from .streamlit/secrets.toml and promotes them to env
+#    vars automatically).  Counter keys are prefixed ``crc101:`` to avoid
+#    clashes with anything else in the Redis instance.  INCR is atomic so
+#    concurrent bumps don't lose counts.
+#
+# 2. Local JSON file (default / local dev) -- fall back to crcglot_stats.json
+#    in the app root.  Single-process, no concurrency safety, but zero setup.
 
-def load_stats() -> dict[str, int]:
-    """Load the persisted usage counters from ``crcglot_stats.json``.
+_UPSTASH_URL = os.environ.get("UPSTASH_REDIS_REST_URL")
+_UPSTASH_TOKEN = os.environ.get("UPSTASH_REDIS_REST_TOKEN")
 
-    Returns:
-        A dict mapping counter key (language code, ``CALC_KEY``, or
-        ``REVERSE_KEY``) to its integer count.  Returns an empty dict when
-        the file is missing, unreadable, or contains malformed JSON.
-        Non-numeric values are silently skipped during the read.
-    """
+if _UPSTASH_URL and _UPSTASH_TOKEN:
+    from upstash_redis import Redis as _UpstashRedis
+    _redis: _UpstashRedis | None = _UpstashRedis(url=_UPSTASH_URL, token=_UPSTASH_TOKEN)
+else:
+    _redis = None
+
+_REDIS_PREFIX = "crc101:"
+
+
+def _all_counter_keys() -> list[str]:
+    """The set of counter keys the footer reads -- per-language plus the
+    two sentinel keys."""
+    return list(LANGUAGES) + [CALC_KEY, REVERSE_KEY]
+
+
+def _load_stats_local() -> dict[str, int]:
     try:
         raw = json.loads(STATS_FILE.read_text(encoding="utf-8"))
     except (FileNotFoundError, json.JSONDecodeError, OSError):
@@ -175,12 +198,44 @@ def load_stats() -> dict[str, int]:
     return {k: int(v) for k, v in raw.items() if isinstance(v, (int, float))}
 
 
-def bump_stats(key: str) -> dict[str, int]:
-    """Increment the counter for ``key`` and persist the updated dict.
+def _bump_stats_local(key: str) -> dict[str, int]:
+    stats = _load_stats_local()
+    stats[key] = stats.get(key, 0) + 1
+    tmp = STATS_FILE.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(stats), encoding="utf-8")
+    tmp.replace(STATS_FILE)
+    return stats
 
-    Uses an atomic tmp-file write so a crash mid-update doesn't leave a
-    truncated stats file.  Not thread-safe under concurrent reruns; see the
-    earlier docs note about concurrency.
+
+def load_stats() -> dict[str, int]:
+    """Load the persisted usage counters.
+
+    Returns:
+        A dict mapping counter key (language code, :data:`CALC_KEY`, or
+        :data:`REVERSE_KEY`) to its integer count.  Missing keys are
+        omitted.  Returns an empty dict when the backend is unreachable
+        or unconfigured with no local file present.
+    """
+    if _redis is None:
+        return _load_stats_local()
+    try:
+        keys = _all_counter_keys()
+        values = _redis.mget(*[f"{_REDIS_PREFIX}{k}" for k in keys])
+        return {k: int(v) for k, v in zip(keys, values) if v is not None}
+    except Exception:
+        # Never let a counter-backend failure break the UI.  Falls through
+        # to an empty dict; the footer will render zeros.
+        return {}
+
+
+def bump_stats(key: str) -> dict[str, int]:
+    """Increment the counter for ``key``.
+
+    Uses Upstash's atomic ``INCR`` when configured -- safe under concurrent
+    reruns and across deployment replicas.  Falls back to a non-atomic
+    read-modify-write on the local JSON file otherwise.  Failures in
+    either backend are swallowed silently; counters are best-effort and
+    must not break the user-facing action.
 
     Args:
         key: The counter to bump.  Typically a crcglot language code
@@ -190,12 +245,13 @@ def bump_stats(key: str) -> dict[str, int]:
     Returns:
         The complete updated stats dict (same shape as :func:`load_stats`).
     """
-    stats = load_stats()
-    stats[key] = stats.get(key, 0) + 1
-    tmp = STATS_FILE.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(stats), encoding="utf-8")
-    tmp.replace(STATS_FILE)
-    return stats
+    if _redis is None:
+        return _bump_stats_local(key)
+    try:
+        _redis.incr(f"{_REDIS_PREFIX}{key}")
+    except Exception:
+        pass
+    return load_stats()
 
 
 # ---------- Pure helpers ----------

@@ -11,3 +11,6 @@ wheels/
 
 # Runtime usage counter -- ephemeral on Streamlit Cloud, not for VCS.
 crcglot_stats.json
+
+# Streamlit secrets (Upstash credentials etc.).  NEVER commit.
+.streamlit/secrets.toml
