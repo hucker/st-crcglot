@@ -135,11 +135,11 @@ wheels = [
 
 [[package]]
 name = "crcglot"
-version = "0.4.0"
+version = "0.7.0"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/f4/f5/8fe375c626ad068c2135fea27602c72684fcb5d59c53cafcbb7de2c03aac/crcglot-0.4.0.tar.gz", hash = "sha256:d2b4b5792d068078a233512873f93aa74cc4f6bb38da3556f2d3b31a4ffafbed", size = 38963, upload-time = "2026-05-26T15:15:44.03Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/00/95/e6d805e85dd22047d88f7dc340e958abe0b06670e5e2ea874de133660cf3/crcglot-0.7.0.tar.gz", hash = "sha256:218d3f5e15b6cd16bdf951899923b8e9d93ea2d2adecdc91c205629a6766ab31", size = 41706, upload-time = "2026-05-26T23:15:49.667Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/ca/06/960175e804d537c779e71533eb296d26f8bc2c9f75bde72bab2ff4262e56/crcglot-0.4.0-py3-none-any.whl", hash = "sha256:5db62bee0afb9dd9adff8bf18ea66e7ddc245cbc27a254c45238be859b55b924", size = 50724, upload-time = "2026-05-26T15:15:42.848Z" },
+    { url = "https://files.pythonhosted.org/packages/7a/cc/cce05c31199f8e25d279208f7b947edb6ddb0e7e13d43ab80b0dc4fc7468/crcglot-0.7.0-py3-none-any.whl", hash = "sha256:bc68dfd0d479dc4a889666da7aa9cdf9455600fe5d642fd0fd88f6cec3a3d11a", size = 55574, upload-time = "2026-05-26T23:15:48.067Z" },
 ]
 
 [[package]]
@@ -558,7 +558,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "crcglot", specifier = ">=0.4.0,<0.5" },
+    { name = "crcglot", specifier = ">=0.7.0,<0.8" },
     { name = "streamlit", specifier = ">=1.57.0" },
 ]
 
