@@ -188,11 +188,23 @@ def render_custom_picker(
             poly_raw = st.text_input(
                 "Polynomial (hex)", value=hex(seed.poly),
                 key=f"{key_prefix}_poly",
+                help=(
+                    "Generator polynomial, expressed as a `width`-bit value "
+                    "with the implicit leading bit dropped.  E.g. CRC-32 "
+                    "uses `0x04C11DB7` (the polynomial x³² + x²⁶ + x²³ + … + 1, "
+                    "truncated to 32 bits)."
+                ),
             )
         with r1c4:
             init_raw = st.text_input(
                 "Init (hex)", value=hex(seed.init),
                 key=f"{key_prefix}_init",
+                help=(
+                    "Initial value loaded into the CRC register before any "
+                    "input bytes are processed.  Typical values: "
+                    "`0xFFFFFFFF` for CRC-32, `0x0000` for CRC-16/ARC, "
+                    "`0xFFFF` for CRC-16/MODBUS."
+                ),
             )
 
         r2c1, r2c2, r2c3, r2c4 = st.columns(4, vertical_alignment="bottom")
@@ -212,6 +224,12 @@ def render_custom_picker(
             xorout_raw = st.text_input(
                 "Xorout (hex)", value=hex(seed.xorout),
                 key=f"{key_prefix}_xorout",
+                help=(
+                    "Value XOR'd against the register after all input bytes "
+                    "have been processed (after output reflection, if any).  "
+                    "Typical values: `0xFFFFFFFF` for CRC-32, `0x0000` for "
+                    "CRC-16/ARC and CRC-16/MODBUS."
+                ),
             )
         with r2c4:
             st.markdown(
@@ -885,10 +903,12 @@ with tab_reverse:
     rev_target_raw = ""
 
     with st.container(border=True):
-        st.markdown('<span class="crc-section">Reverse</span>', unsafe_allow_html=True)
+        st.markdown('<span class="crc-section">Reverse Lookup</span>', unsafe_allow_html=True)
         st.caption(
-            f"Given known input bytes and the resulting CRC, search the "
-            f"{len(ALGORITHMS)}-algorithm catalogue for any matches."
+            f"Have a captured payload and its trailing CRC but don't know "
+            f"which algorithm produced it?  Paste both below and the "
+            f"{len(ALGORITHMS)}-algorithm catalogue is searched for matches.  "
+            "If endianness is in doubt, enable the byte-reversed option below."
         )
 
         mode_col, target_col = st.columns([1, 2], vertical_alignment="bottom")
