@@ -65,19 +65,52 @@ CALC_KEY = "__calculate__"  # not a language code -- excluded from per-lang pill
 REVERSE_KEY = "__reverse__"  # ditto -- reverse-lookup tab counter.
 
 
-def find_matching_algorithms(data: bytes, target: int) -> list[AlgorithmInfo]:
-    """Return every catalogue entry whose CRC of ``data`` equals ``target``."""
-    matches: list[AlgorithmInfo] = []
+def _byte_reverse(value: int, width: int) -> int | None:
+    """Return ``value`` with its bytes reversed at ``width`` bits.
+
+    Returns None when reversal isn't well-defined: ``width`` must be a
+    positive multiple of 8 (so the value packs into whole bytes), and
+    ``value`` must fit in that many bytes.
+    """
+    if width <= 0 or width % 8:
+        return None
+    n = width // 8
+    if value < 0 or value >= (1 << width):
+        return None
+    return int.from_bytes(value.to_bytes(n, "big")[::-1], "big")
+
+
+def find_matching_algorithms(
+    data: bytes,
+    target: int,
+    also_reversed: bool = False,
+) -> list[tuple[AlgorithmInfo, bool]]:
+    """Return every catalogue entry whose CRC of ``data`` matches ``target``.
+
+    When ``also_reversed`` is True, additionally tests the byte-reversed
+    target for each algorithm whose width is a multiple of 8.  Each result
+    is ``(info, was_reversed)`` -- ``was_reversed`` is True when the match
+    came from the byte-reversed comparison rather than the direct one.
+    """
+    matches: list[tuple[AlgorithmInfo, bool]] = []
     for info in ALGORITHMS.values():
-        # Skip widths that can't represent ``target`` at all.
-        if target > ((1 << info.width) - 1):
+        # Compute the direct target's reversed-byte form (if applicable).
+        target_rev = _byte_reverse(target, info.width) if also_reversed else None
+
+        # Both target and (optional) target_rev must fit in this width.
+        mask = (1 << info.width) - 1
+        if target > mask and (target_rev is None or target_rev > mask):
             continue
+
         value = _crc_compute(
             data, info.width, info.poly, info.init,
             info.refin, info.refout, info.xorout,
         )
-        if value == target:
-            matches.append(info)
+
+        if target <= mask and value == target:
+            matches.append((info, False))
+        elif target_rev is not None and target_rev <= mask and value == target_rev:
+            matches.append((info, True))
     return matches
 
 
@@ -698,6 +731,13 @@ st.markdown(
         border-color: #FECACA;
         font-weight: 600;
     }
+    .crc-match-reversed {
+        color: #92400E;
+        background: rgba(245, 158, 11, 0.12);
+        border-color: #FDE68A;
+        font-weight: 600;
+        margin-left: 0.35rem;
+    }
     .crc-match-expected {
         margin-left: 0.5rem;
         font-size: 0.85rem;
@@ -854,8 +894,7 @@ with tab_reverse:
         st.markdown('<span class="crc-section">Reverse</span>', unsafe_allow_html=True)
         st.caption(
             f"Given known input bytes and the resulting CRC, search the "
-            f"{len(ALGORITHMS)}-algorithm catalogue for any matches.  "
-            "The algorithm picker above is ignored on this tab."
+            f"{len(ALGORITHMS)}-algorithm catalogue for any matches."
         )
 
         mode_col, target_col = st.columns([1, 2], vertical_alignment="bottom")
@@ -887,6 +926,20 @@ with tab_reverse:
                 "then consumes the rest as two-nibble byte pairs."
             ),
             key="rev_text",
+        )
+
+        also_rev = st.checkbox(
+            "Also try byte-reversed target",
+            value=False,
+            key="rev_also_reversed",
+            help=(
+                "For each catalogue algorithm of width 8/16/24/32/40/48/56/64, "
+                "also tests the target with its bytes reversed.  Catches the "
+                "common endianness mismatch when the CRC was captured off a "
+                "byte stream in the opposite order from what the algorithm "
+                "produces.  Non-byte-aligned widths (CRC-3, CRC-12, CRC-17, "
+                "etc.) are tested only in the direct orientation."
+            ),
         )
 
         _, rev_btn_col = st.columns([3, 1], vertical_alignment="bottom")
@@ -921,7 +974,7 @@ with tab_reverse:
             st.stop()
         assert target is not None  # narrowing: parse_hex returns int when err is None
 
-        matches = find_matching_algorithms(rev_data, target)
+        matches = find_matching_algorithms(rev_data, target, also_reversed=also_rev)
         bump_stats(REVERSE_KEY)
 
         with st.container(border=True):
@@ -936,12 +989,18 @@ with tab_reverse:
                     f'{"" if len(rev_data) == 1 else "s"} input · target '
                     f"`{target_display}`*"
                 )
-                for info in matches:
+                for info, reversed_match in matches:
                     nibbles = (info.width + 3) // 4
                     poly_hex = f"0x{info.poly:0{nibbles}x}"
+                    rev_badge = (
+                        '<span class="crc-stat-pill crc-match-reversed">'
+                        '↔ byte-reversed</span>'
+                        if reversed_match else ""
+                    )
                     st.markdown(
                         f'<span class="crc-stat-pill crc-match-ok">'
                         f'✓ {info.name}</span>'
+                        f'{rev_badge}'
                         f'<span class="crc-match-expected">'
                         f'width {info.width} · poly <code>{poly_hex}</code>'
                         f'</span>',
@@ -950,12 +1009,18 @@ with tab_reverse:
                     if info.desc:
                         st.caption(info.desc)
             else:
+                hint = ""
+                if not also_rev:
+                    hint = (
+                        "- Try **Also try byte-reversed target** above to "
+                        "catch endianness mismatches\n"
+                    )
                 st.warning(
                     f"No catalogue algorithm produces `{target_display}` for "
                     f"this {len(rev_data):,}-byte input.\n\n"
                     "Common reasons:\n"
+                    f"{hint}"
                     "- Custom polynomial (not in the reveng catalogue)\n"
-                    "- CRC bytes in different byte order (try swapping endianness)\n"
                     "- Input bytes don't exactly match the captured payload "
                     "(extra/missing header bytes, trailing checksum included, etc.)\n"
                     "- The checksum isn't a CRC (could be Adler-32, Fletcher, "
