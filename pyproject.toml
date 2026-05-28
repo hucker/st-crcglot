@@ -5,7 +5,7 @@ description = "Streamlit UI for crcglot — multi-language CRC code generator."
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
-    "crcglot>=0.7.0,<0.8",
+    "crcglot>=0.8.0,<0.9",
     "streamlit>=1.57.0",
     "upstash-redis>=1.4.0",
 ]
