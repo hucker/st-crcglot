@@ -135,8 +135,18 @@ wheels = [
 
 [[package]]
 name = "crcglot"
-version = "0.8.0"
-source = { git = "https://github.com/hucker/crcglot.git?rev=bug%2Fmore-decode-cases#35be49ba6e42a4e7185eab49e03d0d0805c0992b" }
+version = "0.9.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/f3/72/b968afd5c16e40edc2ff451f3b8ea2d05be79022b4f79deb0fb906bb25f7/crcglot-0.9.0.tar.gz", hash = "sha256:cbf4df63fe881b847f1ca73961cefda861b78b71d979cd43f9a07a953f423950", size = 132844, upload-time = "2026-05-31T22:06:37.01Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/2c/65/5241a0c3b594da0037a29b6459e21486c0e4f9e55e27dec1fe2553cbb346/crcglot-0.9.0-cp311-abi3-macosx_11_0_arm64.whl", hash = "sha256:d8d29dd4e01faf145f03ccfea958df1c8067b1c42170b615c4db2ecda513ba43", size = 99539, upload-time = "2026-05-31T22:06:26.976Z" },
+    { url = "https://files.pythonhosted.org/packages/b2/0a/eacebfa4a9c7345ddef7d888397d2592fafc999c7522db0b184432860301/crcglot-0.9.0-cp311-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:10d1e9756d3b28435d4bdff84deebfd8931d8ee10bba8c40d5072b3d1bc1dc21", size = 118335, upload-time = "2026-05-31T22:06:28.464Z" },
+    { url = "https://files.pythonhosted.org/packages/88/4c/6373a0bce90a57378944d76b26a99357ae169af582dd93ece01e75f5080f/crcglot-0.9.0-cp311-abi3-manylinux_2_5_x86_64.manylinux1_x86_64.manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:8eab0d2894d37eb115bd898cfe7e4e282675dcbdf3af4cde83eae4c1227f0925", size = 118630, upload-time = "2026-05-31T22:06:29.825Z" },
+    { url = "https://files.pythonhosted.org/packages/d2/ec/0a1f5ba386fc7e5b5b4a4650f4f1aabce64cced37c88cc551dc53f5c79d6/crcglot-0.9.0-cp311-abi3-musllinux_1_2_aarch64.whl", hash = "sha256:a33687c33dd2ac5325db932dc3bf646c054159fff74768302c34209e0393a269", size = 118440, upload-time = "2026-05-31T22:06:31.527Z" },
+    { url = "https://files.pythonhosted.org/packages/5f/2f/da1dec1f0aaf68ed55e52cc7817759ac4978f675f7f8fb3594dbe03460d0/crcglot-0.9.0-cp311-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:da8b0717a9db9fb7e3f8d978cdf7d6f06409c6a18d4c8970577df728356c510c", size = 118579, upload-time = "2026-05-31T22:06:32.938Z" },
+    { url = "https://files.pythonhosted.org/packages/77/f8/8430bc44e608c3a38fe25776f57b4b0725fe989eb9e9706691eac2de5c42/crcglot-0.9.0-cp311-abi3-win_amd64.whl", hash = "sha256:dd397e5046321ff3ebbd06050266e8de3037b88f0ca1bbadb93c2bb42d1c0084", size = 102554, upload-time = "2026-05-31T22:06:34.361Z" },
+    { url = "https://files.pythonhosted.org/packages/2c/ae/6fc3d0655466cd5c8dc476aa4d55748b75ea94266acabeaceb41ddc4fe54/crcglot-0.9.0-cp311-abi3-win_arm64.whl", hash = "sha256:dbf55e37a4584f3140529b08d0d1e9040df20b8103ba7809c6e812c65044e281", size = 100991, upload-time = "2026-05-31T22:06:35.618Z" },
+]
 
 [[package]]
 name = "gitdb"
@@ -583,7 +593,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "crcglot", git = "https://github.com/hucker/crcglot.git?rev=bug%2Fmore-decode-cases" },
+    { name = "crcglot", specifier = ">=0.9,<0.10" },
     { name = "streamlit", specifier = ">=1.57.0" },
     { name = "upstash-redis", specifier = ">=1.4.0" },
 ]
