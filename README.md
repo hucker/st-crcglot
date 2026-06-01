@@ -1,5 +1,9 @@
 # st-crcglot — CRC101
 
+[![CI](https://github.com/hucker/st-crcglot/actions/workflows/ci.yml/badge.svg)](https://github.com/hucker/st-crcglot/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Python 3.14+](https://img.shields.io/badge/python-3.14+-blue.svg)](https://www.python.org/downloads/)
+
 A Streamlit UI for [`crcglot`](https://github.com/hucker/crcglot): generate, calculate, and reverse-look-up CRCs against the full [reveng CRC catalogue](https://reveng.sourceforge.io/crc-catalogue/all.htm), with verified code emitters for eight target languages.
 
 **Live app:** <https://st-crcglot-f8g7hcvqvuj58axgeok3y7.streamlit.app/>

@@ -4,6 +4,7 @@ This file is intentionally slim and reads top-to-bottom as the page
 structure.  Streamlit render helpers live in :mod:`ui`; all streamlit-free
 logic (parsing, CRC search, stats, version helpers) lives in :mod:`crc_lib`.
 """
+
 from __future__ import annotations
 
 import streamlit as st
@@ -31,14 +32,16 @@ inject_css()
 render_hero()
 
 
-tab_faq, tab_cat_gen, tab_cust_gen, tab_cat_calc, tab_cust_calc, tab_reverse = st.tabs([
-    "ℹ️ Show FAQ",
-    "⚡ Catalog Code Gen",
-    "⚡ Custom Code Gen",
-    "🧮 Catalog Calc",
-    "🧮 Custom Calc",
-    "🔍 Reverse Lookup",
-])
+tab_faq, tab_cat_gen, tab_cust_gen, tab_cat_calc, tab_cust_calc, tab_reverse = st.tabs(
+    [
+        "ℹ️ Show FAQ",
+        "⚡ Catalog Code Gen",
+        "⚡ Custom Code Gen",
+        "🧮 Catalog Calc",
+        "🧮 Custom Calc",
+        "🔍 Reverse Lookup",
+    ]
+)
 
 with tab_faq:
     render_faq_tab()

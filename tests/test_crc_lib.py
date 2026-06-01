@@ -20,6 +20,7 @@ What we do test:
 - ``padding_pills`` formatting both ``TextFormat`` and ``HexFormat``
   into the pill-ready ``(label, help)`` tuples the renderer consumes.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -36,17 +37,21 @@ from crc_lib import (
 
 # ---------- parse_hex (single integer field) ----------
 
+
 class TestParseHex:
     """Boundary tests for the custom-parameter form field parser."""
 
-    @pytest.mark.parametrize("raw,width,expected", [
-        ("0xFF", 8, 0xFF),
-        ("0XFF", 8, 0xFF),
-        ("ff", 8, 0xFF),
-        ("FF", 8, 0xFF),
-        (" 0xCBF43926 ", 32, 0xCBF43926),
-        ("0", 8, 0),
-    ])
+    @pytest.mark.parametrize(
+        "raw,width,expected",
+        [
+            ("0xFF", 8, 0xFF),
+            ("0XFF", 8, 0xFF),
+            ("ff", 8, 0xFF),
+            ("FF", 8, 0xFF),
+            (" 0xCBF43926 ", 32, 0xCBF43926),
+            ("0", 8, 0),
+        ],
+    )
     def test_valid(self, raw, width, expected):
         v, err = parse_hex(raw, "TestField", width)
         assert err is None
@@ -60,18 +65,18 @@ class TestParseHex:
     def test_not_hex(self):
         v, err = parse_hex("not-a-hex", "Xorout", 32)
         assert v is None
-        assert "not a valid hex integer" in err
+        assert err is not None and "not a valid hex integer" in err
 
     def test_overflow_caught(self):
         # 33-bit value doesn't fit in width=32
         v, err = parse_hex("0x1FFFFFFFF", "Poly", 32)
         assert v is None
-        assert "exceeds width" in err
+        assert err is not None and "exceeds width" in err
 
     def test_negative_caught(self):
         v, err = parse_hex("-1", "Init", 16)
         assert v is None
-        assert "non-negative" in err
+        assert err is not None and "non-negative" in err
 
     def test_exact_max_accepted(self):
         # Boundary case: the mask itself fits
@@ -82,18 +87,22 @@ class TestParseHex:
 
 # ---------- parse_hex_bytes (hex-dump to bytes) ----------
 
-class TestParseHexBytes:
-    """Separator-strip + decode behaviour for hex-dump pastes."""
 
-    @pytest.mark.parametrize("raw,expected", [
-        ("", b""),
-        ("DEADBEEF", b"\xDE\xAD\xBE\xEF"),
-        ("de ad be ef", b"\xDE\xAD\xBE\xEF"),
-        ("0xDE,0xAD,0xBE,0xEF", b"\xDE\xAD\xBE\xEF"),
-        ("DE:AD:BE:EF", b"\xDE\xAD\xBE\xEF"),
-        ("0xCA 0xFE", b"\xCA\xFE"),
-        ("DE\nAD\nBE\nEF", b"\xDE\xAD\xBE\xEF"),
-    ])
+class TestParseHexBytes:
+    """Separator-strip + decode behavior for hex-dump pastes."""
+
+    @pytest.mark.parametrize(
+        "raw,expected",
+        [
+            ("", b""),
+            ("DEADBEEF", b"\xde\xad\xbe\xef"),
+            ("de ad be ef", b"\xde\xad\xbe\xef"),
+            ("0xDE,0xAD,0xBE,0xEF", b"\xde\xad\xbe\xef"),
+            ("DE:AD:BE:EF", b"\xde\xad\xbe\xef"),
+            ("0xCA 0xFE", b"\xca\xfe"),
+            ("DE\nAD\nBE\nEF", b"\xde\xad\xbe\xef"),
+        ],
+    )
     def test_decode(self, raw, expected):
         assert parse_hex_bytes(raw) == expected
 
@@ -112,6 +121,7 @@ class TestParseHexBytes:
 
 
 # ---------- _human_separator ----------
+
 
 class TestHumanSeparator:
     """The pill label for the Sep field.  Owned entirely by us."""
@@ -140,6 +150,7 @@ class TestHumanSeparator:
 
 # ---------- padding_pills ----------
 
+
 class TestPaddingPills:
     """Boundary translation from DetectMatch.padding to pill tuples."""
 
@@ -167,15 +178,18 @@ class TestPaddingPills:
         # Hex auto-decode mode uses HexFormat -- a different padding
         # type with its own field names (byte_separator vs separator,
         # prefix vs hex_prefix).  Our wrapper has to handle both.
-        hits = detect_chunk("0x31,0x32,0x33,0x34,0x35,0x36,0x37,0x38,0x39,0xcb,0xf4,0x39,0x26", mode="hex")
+        hits = detect_chunk(
+            "0x31,0x32,0x33,0x34,0x35,0x36,0x37,0x38,0x39,0xcb,0xf4,0x39,0x26",
+            mode="hex",
+        )
         assert hits, "expected a hex-mode crc32 match for the canonical input"
         _, _, padding = hits[0]
         pills = padding_pills(padding)
         labels = [label for label, _ in pills]
         # Sep pill reflects the byte separator detected
-        assert any(l.startswith("Sep:") for l in labels)
+        assert any(lbl.startswith("Sep:") for lbl in labels)
         # Prefix pill shows the "0x" prefix that was applied per-byte
-        prefix_pill = [l for l in labels if l.startswith("Prefix:")]
+        prefix_pill = [lbl for lbl in labels if lbl.startswith("Prefix:")]
         assert prefix_pill, f"expected a Prefix pill, got {labels}"
         # The wrapper appends "(per byte)" when HexFormat.prefix_per_byte
         # is True -- that distinguishes "0xDEADBEEF" (one prefix) from
@@ -200,11 +214,12 @@ class TestPaddingPills:
 # casing change (crcglot's "big"/"little" -> our "Big"/"Little"), and
 # the 3-tuple return shape the renderer relies on.
 
+
 class TestDetectChunkShape:
     """Return-shape and normalization invariants of detect_chunk."""
 
     def test_returns_three_tuples_of_correct_types(self):
-        hits = detect_chunk(b"123456789\xCB\xF4\x39\x26")
+        hits = detect_chunk(b"123456789\xcb\xf4\x39\x26")
         assert hits  # something matched
         for item in hits:
             assert isinstance(item, tuple) and len(item) == 3
@@ -218,10 +233,10 @@ class TestDetectChunkShape:
         # crcglot returns 'big'/'little' lower-case.  Our wrapper
         # title-cases them so the renderer can drop them straight into
         # "Endian: Big" pills without further string munging.
-        be = detect_chunk(b"123456789\xCB\xF4\x39\x26")
+        be = detect_chunk(b"123456789\xcb\xf4\x39\x26")
         assert be[0][1] == "Big"
         # LE-trailing crc32 -- byte-reversed CRC bytes
-        le = detect_chunk(b"123456789\x26\x39\xF4\xCB")
+        le = detect_chunk(b"123456789\x26\x39\xf4\xcb")
         assert any(item[1] == "Little" for item in le)
 
 
@@ -234,7 +249,7 @@ class TestDetectChunkModeInference:
         # Binary mode -> trailing bytes are the CRC; this only resolves
         # if our wrapper actually inferred mode='binary'.  If it
         # silently fell through to text mode, the test would fail.
-        hits = detect_chunk(b"123456789\xCB\xF4\x39\x26")
+        hits = detect_chunk(b"123456789\xcb\xf4\x39\x26")
         assert ("crc32", "Big") in [(i.name, e) for i, e, _ in hits]
 
     def test_str_input_defaults_to_text_mode(self):
@@ -252,7 +267,7 @@ class TestDetectChunkWidthGlob:
 
     def test_width_filter_drops_other_widths(self):
         # crc32 of "123456789" with the well-known trailing bytes
-        chunk = b"123456789\xCB\xF4\x39\x26"
+        chunk = b"123456789\xcb\xf4\x39\x26"
         # width=32 matches
         assert any(i.name == "crc32" for i, _, _ in detect_chunk(chunk, width=32))
         # width=16 narrows it away
@@ -287,6 +302,7 @@ class TestDetectChunkTargetMode:
 
 
 # ---------- available_variants ----------
+
 
 class TestAvailableVariants:
     """Structural checks on the variants_for_width forwarding.  The

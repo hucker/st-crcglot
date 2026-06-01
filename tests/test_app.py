@@ -29,6 +29,7 @@ What we deliberately *don't* test here:
   crcglot's own test suite; re-running it here would just slow the
   smoke pass without adding signal.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -50,6 +51,7 @@ def at() -> AppTest:
 
 
 # ---------- Chrome / structure ----------
+
 
 def test_app_boots_without_exception(at):
     """Page-level smoke: the script runs all the way through.  Any
@@ -91,6 +93,7 @@ def test_expected_subheaders_render(at):
 
 # ---------- FAQ tab ----------
 
+
 def test_faq_leads_with_acknowledgments_section(at):
     """The FAQ markdown should start with the credits block before any
     other section.  Regression target -- 'Standing on the shoulders of
@@ -101,9 +104,7 @@ def test_faq_leads_with_acknowledgments_section(at):
     assert "Standing on the shoulders of giants" in joined
     assert "What CRC101 does" in joined
     # And the credits block comes first
-    assert joined.index("Standing on the shoulders") < joined.index(
-        "What CRC101 does"
-    )
+    assert joined.index("Standing on the shoulders") < joined.index("What CRC101 does")
 
 
 def test_faq_lists_all_three_acknowledgments(at):
@@ -117,6 +118,7 @@ def test_faq_lists_all_three_acknowledgments(at):
 
 
 # ---------- Catalog Calc gold path ----------
+
 
 def test_catalog_calc_test_vector_produces_check_value(at):
     """Open Catalog Calc, leave defaults (crc32 + test vector), click
@@ -139,6 +141,7 @@ def test_catalog_calc_test_vector_produces_check_value(at):
 
 # ---------- Reverse Lookup gold path ----------
 
+
 def _find_button_by_label(at: AppTest, label: str):
     """Locate a button by its visible label.
 
@@ -147,7 +150,9 @@ def _find_button_by_label(at: AppTest, label: str):
     identifier.
     """
     matches = [b for b in at.button if b.label == label]
-    assert matches, f"no button with label {label!r}; saw {[b.label for b in at.button]}"
+    assert matches, (
+        f"no button with label {label!r}; saw {[b.label for b in at.button]}"
+    )
     return matches[0]
 
 
@@ -223,8 +228,7 @@ def test_catalog_calc_with_raw_text_input(at):
     at.button(key="cat_calc_go").click().run()
     code_blocks = [c.value for c in at.code]
     assert any("0x0D4A1185" in code for code in code_blocks), (
-        f"crc32 of 'hello world' should be 0x0D4A1185; "
-        f"got code blocks {code_blocks!r}"
+        f"crc32 of 'hello world' should be 0x0D4A1185; got code blocks {code_blocks!r}"
     )
 
 

@@ -9,6 +9,7 @@ render_reverse_tab).  Pure-Python logic lives in :mod:`crc_lib`.
 functions (chrome + tab bodies); the shared pickers/sections are internal
 implementation details of the tab bodies.
 """
+
 from __future__ import annotations
 
 import streamlit as st
@@ -46,6 +47,7 @@ from crc_lib import (
 
 
 # ---------- Page chrome ----------
+
 
 def render_seo_meta() -> None:
     """Emit the SEO meta block into the page.
@@ -203,6 +205,7 @@ def render_hero() -> None:
 
 # ---------- Picker render helpers (shared by tab bodies) ----------
 
+
 def render_standard_picker(key_prefix: str) -> tuple[str, AlgorithmInfo, int]:
     """Render the catalog selectbox plus a collapsed All-parameters expander.
 
@@ -307,13 +310,15 @@ def render_custom_picker(
         r1c1, r1c2, r1c3, r1c4 = st.columns(4, vertical_alignment="bottom")
         with r1c1:
             refin = st.checkbox(
-                "Reflect input (refin)", value=seed.refin,
+                "Reflect input (refin)",
+                value=seed.refin,
                 key=f"{key_prefix}_refin",
             )
         with r1c2:
             width = st.number_input(
                 "Width (bits)",
-                min_value=1, max_value=64,
+                min_value=1,
+                max_value=64,
                 value=int(seed.width),
                 step=1,
                 key=f"{key_prefix}_width",
@@ -321,7 +326,8 @@ def render_custom_picker(
             )
         with r1c3:
             poly_raw = st.text_input(
-                "Polynomial (hex)", value=f"0x{seed.poly:X}",
+                "Polynomial (hex)",
+                value=f"0x{seed.poly:X}",
                 key=f"{key_prefix}_poly",
                 help=(
                     "**Generator polynomial** as a `width`-bit value with "
@@ -332,7 +338,8 @@ def render_custom_picker(
             )
         with r1c4:
             init_raw = st.text_input(
-                "Init (hex)", value=f"0x{seed.init:X}",
+                "Init (hex)",
+                value=f"0x{seed.init:X}",
                 key=f"{key_prefix}_init",
                 help=(
                     "**Initial register value** loaded before any input "
@@ -347,7 +354,8 @@ def render_custom_picker(
         r2c1, r2c2, r2c3, r2c4 = st.columns(4, vertical_alignment="bottom")
         with r2c1:
             refout = st.checkbox(
-                "Reflect output (refout)", value=seed.refout,
+                "Reflect output (refout)",
+                value=seed.refout,
                 key=f"{key_prefix}_refout",
             )
         with r2c2:
@@ -357,14 +365,15 @@ def render_custom_picker(
                 key=f"{key_prefix}_check",
                 help=(
                     "**Test-vector check value** — the CRC of the ASCII "
-                    "bytes `\"123456789\"`.  Used by the generated "
+                    'bytes `"123456789"`.  Used by the generated '
                     "self-test and (in Code Gen) compared live against "
                     "what the current parameters actually produce."
                 ),
             )
         with r2c3:
             xorout_raw = st.text_input(
-                "Xorout (hex)", value=f"0x{seed.xorout:X}",
+                "Xorout (hex)",
+                value=f"0x{seed.xorout:X}",
                 key=f"{key_prefix}_xorout",
                 help=(
                     "**Final XOR mask** applied to the register after all "
@@ -377,7 +386,8 @@ def render_custom_picker(
             )
         with r2c4:
             st.markdown(
-                '<div class="crc-grid-empty"></div>', unsafe_allow_html=True,
+                '<div class="crc-grid-empty"></div>',
+                unsafe_allow_html=True,
             )
 
     desc = st.text_input(
@@ -391,10 +401,10 @@ def render_custom_picker(
     )
 
     custom_error: str | None = None
-    poly,   e1 = parse_hex(poly_raw,   "Polynomial", int(width))
-    init,   e2 = parse_hex(init_raw,   "Init",       int(width))
-    check,  e3 = parse_hex(check_raw,  "Check",      int(width))
-    xorout, e4 = parse_hex(xorout_raw, "Xorout",     int(width))
+    poly, e1 = parse_hex(poly_raw, "Polynomial", int(width))
+    init, e2 = parse_hex(init_raw, "Init", int(width))
+    check, e3 = parse_hex(check_raw, "Check", int(width))
+    xorout, e4 = parse_hex(xorout_raw, "Xorout", int(width))
     for err in (e1, e2, e3, e4):
         if err and not custom_error:
             custom_error = err
@@ -403,11 +413,23 @@ def render_custom_picker(
     if custom_error:
         st.error(custom_error)
     else:
+        # If none of e1..e4 set custom_error, then poly/init/check/xorout
+        # are all non-None.  The asserts narrow the types for the static
+        # checker (poly et al. are int | None from parse_hex).
+        assert poly is not None
+        assert init is not None
+        assert check is not None
+        assert xorout is not None
         entry = AlgorithmInfo(
-            name=desc or "custom", width=int(width),
-            poly=poly, init=init,
-            refin=refin, refout=refout,
-            xorout=xorout, check=check, desc=desc,
+            name=desc or "custom",
+            width=int(width),
+            poly=poly,
+            init=init,
+            refin=refin,
+            refout=refout,
+            xorout=xorout,
+            check=check,
+            desc=desc,
         )
 
     return entry, int(width), custom_error
@@ -443,8 +465,13 @@ def render_test_vector_display(
     # test-vector CRC by definition -- no compute, just display it.
     if is_custom:
         value = generic_crc(
-            b"123456789", entry.width, entry.poly, entry.init,
-            entry.refin, entry.refout, entry.xorout,
+            b"123456789",
+            entry.width,
+            entry.poly,
+            entry.init,
+            entry.refin,
+            entry.refout,
+            entry.xorout,
         )
     else:
         value = entry.check
@@ -459,7 +486,7 @@ def render_test_vector_display(
                 color="green",
                 icon=":material/calculate:",
                 help=(
-                    "The CRC of `b\"123456789\"` computed live from "
+                    'The CRC of `b"123456789"` computed live from '
                     "your custom parameters."
                 ),
             )
@@ -494,7 +521,7 @@ def render_test_vector_display(
             icon=":material/calculate:",
             help=(
                 "The catalog's published **check** value for this "
-                "algorithm -- the CRC of `b\"123456789\"`."
+                'algorithm -- the CRC of `b"123456789"`.'
             ),
         )
         st.caption(
@@ -511,6 +538,7 @@ def render_test_vector_display(
 
 
 # ---------- Action sections (shared by tab bodies) ----------
+
 
 def render_generate_section(
     name: str,
@@ -549,13 +577,16 @@ def render_generate_section(
             (True) or :func:`generate_catalogue` (False).
         key_prefix: Per-tab namespace for streamlit widget keys.
     """
-    lang = st.segmented_control(
-        "Target language",
-        list(LANGUAGES),
-        format_func=lang_label,
-        default="c",
-        key=f"{key_prefix}_lang",
-    ) or "c"
+    lang = (
+        st.segmented_control(
+            "Target language",
+            list(LANGUAGES),
+            format_func=lang_label,
+            default="c",
+            key=f"{key_prefix}_lang",
+        )
+        or "c"
+    )
 
     variants = available_variants(lang, int(width))
 
@@ -565,14 +596,17 @@ def render_generate_section(
         _prev_variant = variants[0]
     _, _variant_name, _variant_desc = VARIANTS[_prev_variant]
 
-    variant = st.segmented_control(
-        "Implementation",
-        variants,
-        format_func=variant_label,
-        default=variants[0],
-        key=f"{key_prefix}_variant_picker",
-        help=f"{_variant_name}: {_variant_desc}",
-    ) or variants[0]
+    variant = (
+        st.segmented_control(
+            "Implementation",
+            variants,
+            format_func=variant_label,
+            default=variants[0],
+            key=f"{key_prefix}_variant_picker",
+            help=f"{_variant_name}: {_variant_desc}",
+        )
+        or variants[0]
+    )
     st.caption(
         f"{VARIANTS[variant][2]}  "
         "Speed-up figures are rough — see "
@@ -600,10 +634,7 @@ def render_generate_section(
         go = st.button(
             "Generate code",
             type="primary",
-            disabled=(
-                (not symbol.strip())
-                or (is_custom and custom_error is not None)
-            ),
+            disabled=((not symbol.strip()) or (is_custom and custom_error is not None)),
             use_container_width=True,
             icon=":material/play_arrow:",
             key=f"{key_prefix}_go",
@@ -612,7 +643,15 @@ def render_generate_section(
     if go:
         try:
             if is_custom:
-                result = generate_custom(lang, symbol.strip(), entry, variant, symbol.strip())
+                # The button's `disabled=` clause above guarantees we
+                # never get here with a None entry in custom mode --
+                # custom_error being None means render_custom_picker
+                # returned a valid AlgorithmInfo.  Asserting narrows
+                # the type for the static checker.
+                assert entry is not None
+                result = generate_custom(
+                    lang, symbol.strip(), entry, variant, symbol.strip()
+                )
             else:
                 result = generate_catalogue(lang, name, variant, symbol.strip())
         except ValueError as e:
@@ -627,16 +666,25 @@ def render_generate_section(
             st.subheader(f"View {LANGUAGES[lang].display_name} Output")
             extensions = LANGUAGES[lang].extensions
             files = result if isinstance(result, tuple) else (result,)
-            cols = st.columns(len(extensions)) if len(extensions) > 1 else (st.container(),)
+            cols = (
+                st.columns(len(extensions))
+                if len(extensions) > 1
+                else (st.container(),)
+            )
             for col, ext, content in zip(cols, extensions, files):
                 with col:
                     fname = f"{symbol}{ext}"
-                    st.markdown(f"**\U0001F4C4 `{fname}`**  ·  *{len(content):,} bytes*")
+                    st.markdown(
+                        f"**\U0001f4c4 `{fname}`**  ·  *{len(content):,} bytes*"
+                    )
                     st.code(content, language=lang, line_numbers=True)
                     st.download_button(
-                        f"Download {ext}", content,
-                        file_name=fname, mime="text/plain",
-                        use_container_width=True, icon=":material/download:",
+                        f"Download {ext}",
+                        content,
+                        file_name=fname,
+                        mime="text/plain",
+                        use_container_width=True,
+                        icon=":material/download:",
                         key=f"{key_prefix}_dl_{ext}",
                     )
 
@@ -693,7 +741,7 @@ def render_calculate_section(
             value=False,
             key=use_tv_key,
             help=(
-                "Loads the canonical test bytes `\"123456789\"` into the "
+                'Loads the canonical test bytes `"123456789"` into the '
                 "input below.\n\n"
                 "When checked, the computed CRC is compared against the "
                 "algorithm's catalog **check** value and a ✓ / ✗ badge "
@@ -715,12 +763,15 @@ def render_calculate_section(
 
     mode_col, _ = st.columns([1, 3], vertical_alignment="bottom")
     with mode_col:
-        input_mode = st.segmented_control(
-            "Input format",
-            ["Text", "Hex"],
-            default="Text",
-            key=mode_state_key,
-        ) or "Text"
+        input_mode = (
+            st.segmented_control(
+                "Input format",
+                ["Text", "Hex"],
+                default="Text",
+                key=mode_state_key,
+            )
+            or "Text"
+        )
 
     text = st.text_area(
         "Input data",
@@ -776,8 +827,13 @@ def render_calculate_section(
         value = encode_int(data, entry.name)
     else:
         value = generic_crc(
-            data, entry.width, entry.poly, entry.init,
-            entry.refin, entry.refout, entry.xorout,
+            data,
+            entry.width,
+            entry.poly,
+            entry.init,
+            entry.refin,
+            entry.refout,
+            entry.xorout,
         )
     nibbles = (entry.width + 3) // 4
     formatted = f"0x{value:0{nibbles}X}"
@@ -786,8 +842,8 @@ def render_calculate_section(
     with st.container(border=True):
         st.subheader("View Result")
         st.markdown(
-            f"**\U0001F9EE Computed CRC**  ·  `{entry.name}`  ·  "
-            f'*{len(data):,} byte{"" if len(data) == 1 else "s"} input '
+            f"**\U0001f9ee Computed CRC**  ·  `{entry.name}`  ·  "
+            f"*{len(data):,} byte{'' if len(data) == 1 else 's'} input "
             f"· {entry.width}-bit*",
         )
         st.code(formatted, language=None)
@@ -824,6 +880,7 @@ def render_calculate_section(
 
 
 # ---------- Tab bodies ----------
+
 
 def render_faq_tab() -> None:
     """Render the body of the FAQ / overview tab.
@@ -1042,40 +1099,48 @@ def render_reverse_tab() -> None:
 
         mode_col, _ = st.columns([1, 2], vertical_alignment="bottom")
         with mode_col:
-            rev_input_mode = st.segmented_control(
-                "Input format",
-                ["Text", "Hex"],
-                default="Text",
-                key="rev_input_mode",
-            ) or "Text"
+            rev_input_mode = (
+                st.segmented_control(
+                    "Input format",
+                    ["Text", "Hex"],
+                    default="Text",
+                    key="rev_input_mode",
+                )
+                or "Text"
+            )
 
         # CRC source: either treat the trailing bytes/chars of the input
         # as the CRC and let detect() find the boundary (Any / per-width),
         # or supply the target value separately (Target -- last in the
         # list since detect() handles the common cases).
-        rev_source = st.segmented_control(
-            "CRC source",
-            ["Any", "8", "16", "32", "64", "Target"],
-            default="Any",
-            key="rev_source",
-            format_func=lambda s: (
-                "Use Target" if s == "Target"
-                else "Detect (any width)" if s == "Any"
-                else f"{s}-bit at end"
-            ),
-            help=(
-                "**Where does the CRC come from?**\n\n"
-                "- **Detect (any width)** — the trailing bytes/chars of the "
-                "input *are* the CRC.  `detect()` searches every catalog "
-                "algorithm at every width.\n"
-                "- **8 / 16 / 32 / 64** — same, restricted to algorithms "
-                "of that width via the `crc<W>*` glob.\n"
-                "- **Use Target** — type the CRC value into a separate "
-                "field; the input is the payload only.\n\n"
-                "In all end-of-data modes both byte orders are tried "
-                "automatically."
-            ),
-        ) or "Any"
+        rev_source = (
+            st.segmented_control(
+                "CRC source",
+                ["Any", "8", "16", "32", "64", "Target"],
+                default="Any",
+                key="rev_source",
+                format_func=lambda s: (
+                    "Use Target"
+                    if s == "Target"
+                    else "Detect (any width)"
+                    if s == "Any"
+                    else f"{s}-bit at end"
+                ),
+                help=(
+                    "**Where does the CRC come from?**\n\n"
+                    "- **Detect (any width)** — the trailing bytes/chars of the "
+                    "input *are* the CRC.  `detect()` searches every catalog "
+                    "algorithm at every width.\n"
+                    "- **8 / 16 / 32 / 64** — same, restricted to algorithms "
+                    "of that width via the `crc<W>*` glob.\n"
+                    "- **Use Target** — type the CRC value into a separate "
+                    "field; the input is the payload only.\n\n"
+                    "In all end-of-data modes both byte orders are tried "
+                    "automatically."
+                ),
+            )
+            or "Any"
+        )
         end_of_data = rev_source != "Target"
         end_width = int(rev_source) if rev_source not in ("Target", "Any") else 0
 
@@ -1153,7 +1218,9 @@ def render_reverse_tab() -> None:
         detect_mode = "hex" if rev_input_mode == "Hex" else "text"
         try:
             matches = detect_chunk(
-                rev_text, width=end_width or None, mode=detect_mode,
+                rev_text,
+                width=end_width or None,
+                mode=detect_mode,
             )
         except ValueError as e:
             st.error(f"Input data: {e}")
@@ -1181,7 +1248,9 @@ def render_reverse_tab() -> None:
         detect_mode = "hex" if rev_input_mode == "Hex" else "text"
         try:
             matches = detect_chunk(
-                rev_text, mode=detect_mode, target_crc=target,
+                rev_text,
+                mode=detect_mode,
+                target_crc=target,
             )
         except ValueError as e:
             st.error(f"Input data: {e}")
@@ -1220,7 +1289,7 @@ def render_reverse_tab() -> None:
         if matches:
             plural = "es" if len(matches) != 1 else ""
             st.markdown(
-                f"**\U0001F50D Found {len(matches)} match{plural}**  "
+                f"**\U0001f50d Found {len(matches)} match{plural}**  "
                 f"·  *{input_summary}*"
             )
             for info, endian, padding in matches:
@@ -1308,31 +1377,33 @@ def render_footer() -> None:
                 ),
             )
         st.badge(
-            f"\U0001F9EE Calculate: {calc_total}",
+            f"\U0001f9ee Calculate: {calc_total}",
             color="gray",
             help="Number of times someone clicked **Calculate** in either Calc tab.",
         )
         st.badge(
-            f"\U0001F50D Reverse: {rev_total}",
+            f"\U0001f50d Reverse: {rev_total}",
             color="gray",
             help="Number of times someone clicked **Reverse Lookup**.",
         )
 
     rev = git_revision()
-    rev_sha = rev[:-len("-dirty")] if rev.endswith("-dirty") else rev
+    rev_sha = rev[: -len("-dirty")] if rev.endswith("-dirty") else rev
     rev_link = (
         f'<a href="{REPO_URL}/commit/{rev_sha}" target="_blank">{rev}</a>'
-        if rev != "unknown" else rev
+        if rev != "unknown"
+        else rev
     )
     crcglot_ver = crcglot_version()
     crcglot_link = (
         f'<a href="https://pypi.org/project/crcglot/{crcglot_ver}/" target="_blank">'
-        f'crcglot {crcglot_ver}</a>'
-        if crcglot_ver != "unknown" else f"crcglot {crcglot_ver}"
+        f"crcglot {crcglot_ver}</a>"
+        if crcglot_ver != "unknown"
+        else f"crcglot {crcglot_ver}"
     )
     st.markdown(
         f'<div class="crc-build">'
-        f'v{app_version()} &middot; rev {rev_link} &middot; {crcglot_link}'
-        f'</div>',
+        f"v{app_version()} &middot; rev {rev_link} &middot; {crcglot_link}"
+        f"</div>",
         unsafe_allow_html=True,
     )
