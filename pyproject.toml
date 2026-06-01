@@ -1,8 +1,11 @@
 [project]
 name = "st-crcglot"
-version = "0.4.0"
+version = "0.5.0"
 description = "Streamlit UI for crcglot — multi-language CRC code generator."
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Chuck Bass" }]
 requires-python = ">=3.14"
 dependencies = [
     "crcglot>=0.9.1,<0.10",
@@ -14,10 +17,16 @@ dependencies = [
 dev = [
     "pytest>=9.0.3",
     "pytest-cov>=7.1.0",
+    "ruff>=0.15.15",
+    "ty>=0.0.40",
 ]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Source modules live under src/, not at the repo root.  Adding src to
+# pythonpath lets `from crc_lib import ...` etc. resolve in test files
+# without having to install the project as a package.
+pythonpath = ["src"]
 # AppTest's first .run() compiles the script and warms streamlit caches,
 # which on a cold venv can take noticeably longer than the default 3s.
 # 30s is comfortable headroom on CI as well as a warm dev machine.

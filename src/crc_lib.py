@@ -5,6 +5,7 @@ here is pure Python: parsing, CRC search, stats I/O, crcglot wrappers, format
 helpers, version helpers, and constants.  Importable from a script, a notebook,
 or a pytest suite without spinning up a streamlit runtime.
 """
+
 from __future__ import annotations
 
 import functools
@@ -72,27 +73,37 @@ __all__ = [
 # ---------- Module-level constants ----------
 
 REPO_URL = "https://github.com/hucker/st-crcglot"
-APP_ROOT = Path(__file__).resolve().parent
+# This module lives at src/crc_lib.py; APP_ROOT walks up to the repo
+# root so pyproject.toml (read by app_version), crcglot_stats.json
+# (stats fallback), and git rev-parse (run with cwd=APP_ROOT) all
+# resolve correctly.
+APP_ROOT = Path(__file__).resolve().parent.parent
 STATS_FILE = APP_ROOT / "crcglot_stats.json"
-CALC_KEY = "__calculate__"      # not a language code -- excluded from per-lang pills.
-REVERSE_KEY = "__reverse__"     # ditto -- reverse-lookup tab counter.
+CALC_KEY = "__calculate__"  # not a language code -- excluded from per-lang pills.
+REVERSE_KEY = "__reverse__"  # ditto -- reverse-lookup tab counter.
 SENTINEL_CUSTOM = "__custom__"  # passed as `name` when generating from custom params.
 
 VARIANTS: dict[str, tuple[str, str, str]] = {
-    "bitwise": ("◯", "Bit-by-bit",   "Smallest; portable; one byte per 8 shifts."),
-    "table":   ("▦", "Table-driven", "256-entry LUT; ~2-4x faster than bit-by-bit."),
-    "slice8":  ("▩", "Slice-by-8",   "8 LUTs; another ~2-4x faster (32/64-bit CRCs only)."),
+    "bitwise": ("◯", "Bit-by-bit", "Smallest; portable; one byte per 8 shifts."),
+    "table": ("▦", "Table-driven", "256-entry LUT; ~2-4x faster than bit-by-bit."),
+    "slice8": (
+        "▩",
+        "Slice-by-8",
+        "8 LUTs; another ~2-4x faster (32/64-bit CRCs only).",
+    ),
 }
 
 # Width ascending, then name ascending: groups crc8 -> 16 -> 32 -> 64 in the picker.
 catalogue_names = sorted(
-    ALGORITHMS, key=lambda n: (ALGORITHMS[n].width, n),
+    ALGORITHMS,
+    key=lambda n: (ALGORITHMS[n].width, n),
 )
 
 _HEX_STRIP_RE = re.compile(r"0x|0X|[:,\s]")
 
 
 # ---------- Version helpers ----------
+
 
 @functools.cache
 def app_version() -> str:
@@ -107,7 +118,7 @@ def app_version() -> str:
     try:
         data = tomllib.loads((APP_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
         return data["project"]["version"]
-    except (OSError, KeyError, tomllib.TOMLDecodeError):
+    except OSError, KeyError, tomllib.TOMLDecodeError:
         return "unknown"
 
 
@@ -154,11 +165,14 @@ def git_revision() -> str:
         ).strip()
         if not sha:
             return "unknown"
-        dirty = subprocess.call(
-            ["git", "diff-index", "--quiet", "HEAD", "--"],
-            cwd=APP_ROOT,
-            stderr=subprocess.DEVNULL,
-        ) != 0
+        dirty = (
+            subprocess.call(
+                ["git", "diff-index", "--quiet", "HEAD", "--"],
+                cwd=APP_ROOT,
+                stderr=subprocess.DEVNULL,
+            )
+            != 0
+        )
         return f"{sha}-dirty" if dirty else sha
     except OSError:
         return "unknown"
@@ -183,6 +197,7 @@ _UPSTASH_TOKEN = os.environ.get("UPSTASH_REDIS_REST_TOKEN")
 
 if _UPSTASH_URL and _UPSTASH_TOKEN:
     from upstash_redis import Redis as _UpstashRedis
+
     _redis: _UpstashRedis | None = _UpstashRedis(url=_UPSTASH_URL, token=_UPSTASH_TOKEN)
 else:
     _redis = None
@@ -199,7 +214,7 @@ def _all_counter_keys() -> list[str]:
 def _load_stats_local() -> dict[str, int]:
     try:
         raw = json.loads(STATS_FILE.read_text(encoding="utf-8"))
-    except (FileNotFoundError, json.JSONDecodeError, OSError):
+    except FileNotFoundError, json.JSONDecodeError, OSError:
         return {}
     return {k: int(v) for k, v in raw.items() if isinstance(v, (int, float))}
 
@@ -261,6 +276,7 @@ def bump_stats(key: str) -> dict[str, int]:
 
 
 # ---------- Pure helpers ----------
+
 
 def parse_hex(raw: str, label: str, width: int) -> tuple[int | None, str | None]:
     """Parse a single hex integer constrained to ``width`` bits.
@@ -372,7 +388,11 @@ def detect_chunk(
     if mode is None:
         mode = "text" if isinstance(chunk, str) else "binary"
     result = detect(
-        chunk, mode=mode, match="all", algorithms=glob, target_crc=target_crc,
+        chunk,
+        mode=mode,
+        match="all",
+        algorithms=glob,
+        target_crc=target_crc,
     )
     return [
         (
@@ -443,42 +463,47 @@ def padding_pills(padding: object | None) -> list[tuple[str, str]]:
     if sep is None:
         sep = getattr(padding, "byte_separator", None)
     if sep is not None:
-        pills.append((
-            f"Sep: {_human_separator(sep)}",
-            "Character `detect()` found between the payload and the hex "
-            "CRC in the input.\n\n"
-            "- `SPACE` / `TAB` / `NEWLINE` / `CRLF` for whitespace.\n"
-            "- Punctuation shown literally (e.g. `` `:` ``, `` `,` ``).\n"
-            "- `NONE` if the CRC sat directly against the payload.",
-        ))
+        pills.append(
+            (
+                f"Sep: {_human_separator(sep)}",
+                "Character `detect()` found between the payload and the hex "
+                "CRC in the input.\n\n"
+                "- `SPACE` / `TAB` / `NEWLINE` / `CRLF` for whitespace.\n"
+                "- Punctuation shown literally (e.g. `` `:` ``, `` `,` ``).\n"
+                "- `NONE` if the CRC sat directly against the payload.",
+            )
+        )
 
     # Prefix: TextFormat.hex_prefix, HexFormat.prefix (+ prefix_per_byte flag).
     prefix = getattr(padding, "hex_prefix", None)
     if prefix is None:
         prefix = getattr(padding, "prefix", None)
     if prefix:
-        per_byte = (
-            " (per byte)" if getattr(padding, "prefix_per_byte", False) else ""
+        per_byte = " (per byte)" if getattr(padding, "prefix_per_byte", False) else ""
+        pills.append(
+            (
+                f"Prefix: {prefix}{per_byte}",
+                "A hex prefix (typically `0x`) detected immediately before "
+                "the CRC.  `(per byte)` means every byte in the input was "
+                "prefixed individually, not just the trailing CRC.",
+            )
         )
-        pills.append((
-            f"Prefix: {prefix}{per_byte}",
-            "A hex prefix (typically `0x`) detected immediately before "
-            "the CRC.  `(per byte)` means every byte in the input was "
-            "prefixed individually, not just the trailing CRC.",
-        ))
 
     # Case of the hex CRC characters.
     case = "Upper" if getattr(padding, "uppercase", False) else "Lower"
-    pills.append((
-        f"Hex: {case}",
-        "Case of the hex digits in the input: `Upper` (e.g. `CBF43926`) "
-        "or `Lower` (e.g. `cbf43926`).",
-    ))
+    pills.append(
+        (
+            f"Hex: {case}",
+            "Case of the hex digits in the input: `Upper` (e.g. `CBF43926`) "
+            "or `Lower` (e.g. `cbf43926`).",
+        )
+    )
 
     return pills
 
 
 # ---------- crcglot wrappers ----------
+
 
 def available_variants(code: str, width: int) -> list[str]:
     """Return the implementation variants a language supports at a given width.
@@ -512,11 +537,15 @@ def generate_catalogue(lang: str, name: str, variant: str, symbol: str):
         or a tuple of strings for multi-file languages (e.g. C's ``.h``/``.c``).
     """
     return LANGUAGES[lang].generator(
-        name, symbol=symbol or None, variant=variant,
+        name,
+        symbol=symbol or None,
+        variant=variant,
     )
 
 
-def generate_custom(lang: str, name: str, entry: AlgorithmInfo, variant: str, symbol: str):
+def generate_custom(
+    lang: str, name: str, entry: AlgorithmInfo, variant: str, symbol: str
+):
     """Generate code from a custom :class:`AlgorithmInfo` instead of a name.
 
     Args:
@@ -532,11 +561,15 @@ def generate_custom(lang: str, name: str, entry: AlgorithmInfo, variant: str, sy
         The generator's output -- shape mirrors :func:`generate_catalogue`.
     """
     return LANGUAGES[lang].generator_from_entry(
-        name, entry, symbol=symbol or None, variant=variant,
+        name,
+        entry,
+        symbol=symbol or None,
+        variant=variant,
     )
 
 
 # ---------- Format helpers ----------
+
 
 def default_symbol(name: str) -> str:
     """Convert a catalog algorithm name into a default function/file basename.
