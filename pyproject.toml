@@ -1,11 +1,11 @@
 [project]
 name = "st-crcglot"
-version = "0.2.0"
+version = "0.4.0"
 description = "Streamlit UI for crcglot — multi-language CRC code generator."
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
-    "crcglot>=0.8.0,<0.9",
+    "crcglot>=0.9.1,<0.10",
     "streamlit>=1.57.0",
     "upstash-redis>=1.4.0",
 ]

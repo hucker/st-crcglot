@@ -14,6 +14,7 @@ from __future__ import annotations
 import streamlit as st
 
 from crc_lib import (
+    ACKNOWLEDGMENTS,
     ALGORITHMS,
     AlgorithmInfo,
     CALC_KEY,
@@ -22,7 +23,6 @@ from crc_lib import (
     REVERSE_KEY,
     SENTINEL_CUSTOM,
     VARIANTS,
-    _crc_compute,
     alg_label,
     app_version,
     available_variants,
@@ -30,14 +30,15 @@ from crc_lib import (
     catalogue_names,
     crcglot_version,
     default_symbol,
-    find_matching_algorithms,
-    find_matching_algorithms_at_end,
-    find_matching_algorithms_text_end,
+    detect_chunk,
+    encode_int,
     generate_catalogue,
     generate_custom,
+    generic_crc,
     git_revision,
     lang_label,
     load_stats,
+    padding_pills,
     parse_hex,
     parse_hex_bytes,
     variant_label,
@@ -54,20 +55,21 @@ def render_seo_meta() -> None:
     picks them up; strict / non-JS crawlers won't.  A reverse-proxy
     rewriting the served HTML would be the real fix.
     """
+    n = len(ALGORITHMS)
     st.markdown(
-        """
-<meta name="description" content="CRC101 -- generate and verify CRCs in your browser. Catalog of 70+ algorithms, code emitters for C, Python, Rust, VHDL, C#, Go, and Zig, plus an interactive calculator.">
+        f"""
+<meta name="description" content="CRC101 -- generate and verify CRCs in your browser. Catalog of {n} algorithms, code emitters for C, Python, Rust, VHDL, C#, Go, and Zig, plus an interactive calculator.">
 <meta name="keywords" content="CRC, CRC-8, CRC-16, CRC-32, CRC-64, CRC calculator, CRC code generator, cyclic redundancy check, reveng catalogue, polynomial, crcglot, C, Python, Rust, VHDL, C#, Go, Zig">
 <meta name="author" content="Chuck Bass / acrocad.net">
 <meta name="robots" content="index, follow">
 
 <meta property="og:title" content="CRC101 -- CRC code generator & calculator">
-<meta property="og:description" content="Generate CRC code in C, Python, Rust, VHDL, C#, Go, or Zig from 70+ catalog algorithms -- or calculate a CRC over your own bytes.">
+<meta property="og:description" content="Generate CRC code in C, Python, Rust, VHDL, C#, Go, or Zig from {n} catalog algorithms -- or calculate a CRC over your own bytes.">
 <meta property="og:type" content="website">
 
 <meta name="twitter:card" content="summary">
 <meta name="twitter:title" content="CRC101 -- CRC code generator & calculator">
-<meta name="twitter:description" content="Generate CRC code in C, Python, Rust, VHDL, C#, Go, or Zig from 70+ catalog algorithms -- or calculate a CRC over your own bytes.">
+<meta name="twitter:description" content="Generate CRC code in C, Python, Rust, VHDL, C#, Go, or Zig from {n} catalog algorithms -- or calculate a CRC over your own bytes.">
         """,
         unsafe_allow_html=True,
     )
@@ -133,85 +135,6 @@ def inject_css() -> None:
         border: none;
         box-shadow: none;
         padding: 0;
-    }
-
-    .crc-stats {
-        display: flex;
-        flex-wrap: wrap;
-        align-items: center;
-        gap: 0.4rem;
-        padding-top: 0.4rem;
-    }
-    .crc-stats-totals {
-        font-size: 0.78rem;
-        font-weight: 600;
-        letter-spacing: 0.06em;
-        text-transform: uppercase;
-        color: #FF6B35;
-        padding-top: 0.6rem;
-    }
-    .crc-stats-total {
-        font-size: 0.78rem;
-        font-weight: 600;
-        letter-spacing: 0.06em;
-        text-transform: uppercase;
-        color: #FF6B35;
-        margin-right: 0.3rem;
-    }
-    .crc-stat-pill {
-        display: inline-flex;
-        align-items: center;
-        gap: 0.3rem;
-        padding: 0.15rem 0.6rem;
-        font-size: 0.82rem;
-        background: #FAFAFA;
-        border: 1px solid #E5E7EB;
-        border-radius: 999px;
-    }
-    .crc-stat-pill-zero { opacity: 0.45; }
-    .crc-stat-pill strong { color: #FF6B35; font-weight: 700; }
-
-    .crc-match-ok {
-        color: #047857;
-        background: rgba(16, 185, 129, 0.10);
-        border-color: #A7F3D0;
-        font-weight: 600;
-    }
-    .crc-match-fail {
-        color: #B91C1C;
-        background: rgba(239, 68, 68, 0.10);
-        border-color: #FECACA;
-        font-weight: 600;
-    }
-    /* Spacer for secondary annotation pills (e.g. endianness, width)
-       that sit right of the primary algorithm-name pill. */
-    .crc-annotation-pill {
-        margin-left: 0.35rem;
-    }
-    .crc-match-expected {
-        margin-left: 0.5rem;
-        font-size: 0.85rem;
-        opacity: 0.7;
-    }
-    .crc-match-expected code {
-        background: #FAFAFA;
-        border: 1px solid #E5E7EB;
-        border-radius: 4px;
-        padding: 0.05rem 0.35rem;
-        font-size: 0.85rem;
-    }
-
-    .crc-section {
-        display: inline-block;
-        padding: 0.15rem 0.6rem;
-        margin-bottom: 0.6rem;
-        font-size: 0.78rem;
-        font-weight: 600;
-        letter-spacing: 0.07em;
-        text-transform: uppercase;
-        color: #FF6B35;
-        background: rgba(255, 107, 53, 0.10);
-        border-radius: 999px;
     }
 
     .crc-hero h1 {
@@ -513,27 +436,50 @@ def render_test_vector_display(
     if entry is None:
         return
 
-    value = _crc_compute(
-        b"123456789", entry.width, entry.poly, entry.init,
-        entry.refin, entry.refout, entry.xorout,
-    )
     nibbles = (entry.width + 3) // 4
+    # Custom path: compute live from the user's typed parameters (no
+    # registered name to defer to).  Catalog path: entry.check IS the
+    # test-vector CRC by definition -- no compute, just display it.
+    if is_custom:
+        value = generic_crc(
+            b"123456789", entry.width, entry.poly, entry.init,
+            entry.refin, entry.refout, entry.xorout,
+        )
+    else:
+        value = entry.check
     formatted = f"0x{value:0{nibbles}X}"
 
     if is_custom:
         expected = f"0x{entry.check:0{nibbles}X}"
         ok = value == entry.check
-        badge_cls = "crc-match-ok" if ok else "crc-match-fail"
-        badge_text = "✓ matches Check" if ok else "✗ mismatch with typed Check"
-        st.markdown(
-            f'<span class="crc-stat-pill crc-match-ok">'
-            f'\U0001F9EE Test vector CRC: <code>{formatted}</code></span>'
-            f'<span class="crc-stat-pill {badge_cls}" '
-            f'style="margin-left: 0.35rem;">{badge_text}</span>'
-            f'<span class="crc-match-expected">'
-            f'typed Check: <code>{expected}</code></span>',
-            unsafe_allow_html=True,
-        )
+        with st.container(horizontal=True, gap="small"):
+            st.badge(
+                f"Test vector CRC: {formatted}",
+                color="green",
+                icon=":material/calculate:",
+                help=(
+                    "The CRC of `b\"123456789\"` computed live from "
+                    "your custom parameters."
+                ),
+            )
+            if ok:
+                st.badge(
+                    "matches Check",
+                    color="green",
+                    icon=":material/check:",
+                    help=f"Equals the **Check** value you typed: `{expected}`.",
+                )
+            else:
+                st.badge(
+                    "mismatch with typed Check",
+                    color="red",
+                    icon=":material/close:",
+                    help=(
+                        f"Differs from the **Check** value you typed: "
+                        f"`{expected}`.  Either the parameters or the "
+                        f"Check field needs adjusting."
+                    ),
+                )
         st.caption(
             "Computed live from your parameters by `crcglot`.  The ✓/✗ "
             "badge compares it to the **Check** value you typed; if it "
@@ -541,10 +487,14 @@ def render_test_vector_display(
             "generated code will pass after compilation."
         )
     else:
-        st.markdown(
-            f'<span class="crc-stat-pill crc-match-ok">'
-            f'\U0001F9EE Test vector CRC: <code>{formatted}</code></span>',
-            unsafe_allow_html=True,
+        st.badge(
+            f"Test vector CRC: {formatted}",
+            color="green",
+            icon=":material/calculate:",
+            help=(
+                "The catalog's published **check** value for this "
+                "algorithm -- the CRC of `b\"123456789\"`."
+            ),
         )
         st.caption(
             "This is the algorithm's published **check** value from the "
@@ -673,10 +623,7 @@ def render_generate_section(
         bump_stats(lang)
 
         with st.container(border=True):
-            st.markdown(
-                f'<span class="crc-section">View {LANGUAGES[lang].display_name} Output</span>',
-                unsafe_allow_html=True,
-            )
+            st.subheader(f"View {LANGUAGES[lang].display_name} Output")
             extensions = LANGUAGES[lang].extensions
             files = result if isinstance(result, tuple) else (result,)
             cols = st.columns(len(extensions)) if len(extensions) > 1 else (st.container(),)
@@ -704,8 +651,9 @@ def render_calculate_section(
     Layout: optional test-vector checkbox, Text/Hex input-mode segmented
     control, multi-line text area, Calculate(/Verify) button.  On click,
     parses the input via :func:`parse_hex_bytes` (Hex mode) or
-    ``.encode("utf-8")`` (Text mode), computes the CRC via
-    :func:`_crc_compute`, bumps :data:`CALC_KEY`, and renders the result.
+    ``.encode("utf-8")`` (Text mode), computes the CRC via crcglot's
+    :func:`encode_int` (catalog) or :func:`generic_crc` (custom), bumps
+    :data:`CALC_KEY`, and renders the result.
 
     When ``allow_verify=True`` and the user has the test-vector checkbox
     checked at click time, the result also shows a ✓ Match / ✗ Mismatch
@@ -820,16 +768,22 @@ def render_calculate_section(
     else:
         data = text.encode("utf-8")
 
-    value = _crc_compute(
-        data, entry.width, entry.poly, entry.init,
-        entry.refin, entry.refout, entry.xorout,
-    )
+    # Defer to crcglot: catalog algorithms compute via encode_int(name);
+    # custom algorithms have no registered name so we hand crcglot the
+    # raw parameter tuple from the user's typed AlgorithmInfo.
+    if entry.name in ALGORITHMS:
+        value = encode_int(data, entry.name)
+    else:
+        value = generic_crc(
+            data, entry.width, entry.poly, entry.init,
+            entry.refin, entry.refout, entry.xorout,
+        )
     nibbles = (entry.width + 3) // 4
     formatted = f"0x{value:0{nibbles}X}"
     bump_stats(CALC_KEY)
 
     with st.container(border=True):
-        st.markdown('<span class="crc-section">View Result</span>', unsafe_allow_html=True)
+        st.subheader("View Result")
         st.markdown(
             f"**\U0001F9EE Computed CRC**  ·  `{entry.name}`  ·  "
             f'*{len(data):,} byte{"" if len(data) == 1 else "s"} input '
@@ -840,14 +794,26 @@ def render_calculate_section(
         if use_test_vector:
             expected = f"0x{entry.check:0{nibbles}X}"
             ok = value == entry.check
-            badge_cls = "crc-match-ok" if ok else "crc-match-fail"
-            badge_text = "✓ Match" if ok else "✗ Mismatch"
-            st.markdown(
-                f'<span class="crc-stat-pill {badge_cls}">{badge_text}</span>'
-                f'<span class="crc-match-expected">'
-                f'Expected: <code>{expected}</code></span>',
-                unsafe_allow_html=True,
-            )
+            if ok:
+                st.badge(
+                    "Match",
+                    color="green",
+                    icon=":material/check:",
+                    help=(
+                        f"Matches the catalog's published **check** value: "
+                        f"`{expected}`."
+                    ),
+                )
+            else:
+                st.badge(
+                    "Mismatch",
+                    color="red",
+                    icon=":material/close:",
+                    help=(
+                        f"Differs from the catalog's published **check** "
+                        f"value: `{expected}`."
+                    ),
+                )
             st.caption(
                 "Verification compares the computed CRC against the "
                 "catalog's published **check** value — the canonical "
@@ -866,13 +832,29 @@ def render_faq_tab() -> None:
     implementation variants.  Pure markdown -- no widgets, no escape
     hatches.
     """
+    if ACKNOWLEDGMENTS:
+        ack_lines = "\n".join(
+            f"- **[{ack['name']}]({ack['url']})** — {ack['author']}. {ack['role']}."
+            for ack in ACKNOWLEDGMENTS
+        )
+        ack_block = (
+            "### Standing on the shoulders of giants\n\n"
+            "CRC101 (and the underlying "
+            "[`crcglot`](https://github.com/hucker/crcglot) library) exists "
+            "because of decades of public work by others.  The algorithms, "
+            "parameter vocabulary, and runtime acceleration we lean on:\n\n"
+            f"{ack_lines}\n\n"
+            "---\n\n"
+        )
+    else:
+        ack_block = ""
     with st.container(border=True):
         st.markdown(
-            """
-### What CRC101 does
+            f"""
+{ack_block}### What CRC101 does
 
 - **Generate CRC code** in C, C#, Go, Python, Rust, TypeScript,
-  Verilog, or VHDL — for any of 71 catalog algorithms or a custom
+  Verilog, or VHDL — for any of {len(ALGORITHMS)} catalog algorithms or a custom
   polynomial you define.
 - **Calculate a CRC** over your own bytes (text or hex), with
   optional verification against the canonical check value.
@@ -881,7 +863,7 @@ def render_faq_tab() -> None:
 
 ### Why you can trust the output
 
-- The 71 algorithms come from **Greg Cook's
+- The {len(ALGORITHMS)} algorithms come from **Greg Cook's
   [reveng catalogue](https://reveng.sourceforge.io/crc-catalogue/all.htm)**,
   the de-facto industry reference.  Each entry has a published `check`
   value — the CRC of the ASCII bytes `"123456789"`.
@@ -958,16 +940,16 @@ def render_calc_tab(picker_kind: str, key_prefix: str, allow_verify: bool) -> No
     """
     with st.container(border=True):
         if picker_kind == "catalog":
-            st.markdown('<span class="crc-section">Select Algorithm</span>', unsafe_allow_html=True)
+            st.subheader("Select Algorithm")
             _, entry, _ = render_standard_picker(key_prefix)
             custom_error = None
         else:
-            st.markdown('<span class="crc-section">Select Parameters</span>', unsafe_allow_html=True)
+            st.subheader("Select Parameters")
             entry, _, custom_error = render_custom_picker(key_prefix)
 
     with st.container(border=True):
         title = "Calculate/Verify CRC" if allow_verify else "Calculate CRC"
-        st.markdown(f'<span class="crc-section">{title}</span>', unsafe_allow_html=True)
+        st.subheader(title)
         render_calculate_section(
             entry=entry,
             custom_error=custom_error,
@@ -998,17 +980,17 @@ def render_gen_tab(picker_kind: str, key_prefix: str, is_custom: bool) -> None:
     """
     with st.container(border=True):
         if picker_kind == "catalog":
-            st.markdown('<span class="crc-section">Select Algorithm</span>', unsafe_allow_html=True)
+            st.subheader("Select Algorithm")
             name, entry, width = render_standard_picker(key_prefix)
             custom_error = None
         else:
-            st.markdown('<span class="crc-section">Select Parameters</span>', unsafe_allow_html=True)
+            st.subheader("Select Parameters")
             entry, width, custom_error = render_custom_picker(key_prefix)
             name = SENTINEL_CUSTOM
         render_test_vector_display(entry, is_custom=is_custom)
 
     with st.container(border=True):
-        st.markdown('<span class="crc-section">Generate code</span>', unsafe_allow_html=True)
+        st.subheader("Generate code")
         render_generate_section(
             name=name,
             entry=entry,
@@ -1022,30 +1004,25 @@ def render_gen_tab(picker_kind: str, key_prefix: str, is_custom: bool) -> None:
 def render_reverse_tab() -> None:
     """Render the body of the Reverse Lookup tab.
 
-    Has its own UI (not a composition of the picker / action helpers used by
-    the other tabs) because the workflow is fundamentally different: the
-    user supplies bytes + a CRC value and asks "which algorithm produced
-    this?", searching the whole catalog rather than configuring one
-    algorithm.
+    Both workflows fully delegate the catalog search to ``crcglot.detect``
+    via :func:`crc_lib.detect_chunk`.  Two workflows, selected via the
+    "CRC source" segmented control:
 
-    Two modes selected via the "CRC source" segmented control:
-        - **Target**: the user types the target CRC into the hex input
-          field; :func:`find_matching_algorithms` searches the catalog.
-        - **End-of-data** (8 / 16 / 32 / 64 bits): the last N bytes of the
-          input data are treated as the trailing CRC and the rest as the
-          payload; :func:`find_matching_algorithms_at_end` searches only
-          algorithms of the matching width.
-
-    In both modes the "Try big/little endian" checkbox additionally tests
-    the byte-reversed interpretation of the target -- catches the common
-    endianness mismatch when the CRC was captured off a byte stream in
-    the opposite order from what the protocol uses on the wire.
+        - **Use Target**: the user supplies a payload *and* the target
+          CRC value separately; ``detect`` is called with ``target_crc``
+          which loops the catalog comparing each algorithm's CRC of the
+          payload against the target.  No byte interpretation happens in
+          this path, so all matches report ``Endian: Big``.
+        - **End-of-data** (Any / 8 / 16 / 32 / 64 bits): the trailing
+          bytes-or-hex of the input *are* the CRC; ``detect`` figures
+          out the boundary, tries both endianness, and (in text mode)
+          handles ``0x`` prefixes, uppercase, and separators
+          automatically.  The width buttons translate to ``detect``'s
+          ``algorithms="crc<W>*"`` glob.
 
     On click, bumps :data:`REVERSE_KEY`.  Each match renders as a green
-    ✓ pill with the algorithm name; matches that hit via the reversed /
-    little-endian interpretation get an additional amber ↔ pill.  The
-    no-match path explains common reasons (custom polynomial, byte order,
-    wrong payload bytes, not a CRC).
+    ✓ pill with the algorithm name; little-endian matches get an
+    additional amber ↔ pill.
     """
     rev_go = False
     rev_input_mode = "Text"
@@ -1053,15 +1030,16 @@ def render_reverse_tab() -> None:
     rev_target_raw = ""
 
     with st.container(border=True):
-        st.markdown('<span class="crc-section">Reverse Lookup</span>', unsafe_allow_html=True)
+        st.subheader("Reverse Lookup")
         st.caption(
             f"Have a captured payload and its trailing CRC but don't know "
             f"which algorithm produced it?  Paste both below and the "
             f"{len(ALGORITHMS)}-algorithm catalog is searched for matches.  "
-            "If endianness is in doubt, enable the big/little-endian option."
+            "Endianness, `0x` prefixes, uppercase hex, and separators are "
+            "handled automatically by crcglot's `detect()`."
         )
 
-        mode_col, target_col = st.columns([1, 2], vertical_alignment="bottom")
+        mode_col, _ = st.columns([1, 2], vertical_alignment="bottom")
         with mode_col:
             rev_input_mode = st.segmented_control(
                 "Input format",
@@ -1070,73 +1048,62 @@ def render_reverse_tab() -> None:
                 key="rev_input_mode",
             ) or "Text"
 
-        # CRC source selector: either the typed target value, or extract
-        # the last N bytes of input data as the CRC.
+        # CRC source: either treat the trailing bytes/chars of the input
+        # as the CRC and let detect() find the boundary (Any / per-width),
+        # or supply the target value separately (Target -- last in the
+        # list since detect() handles the common cases).
         rev_source = st.segmented_control(
             "CRC source",
-            ["Target", "All", "8", "16", "32", "64"],
-            default="Target",
+            ["Any", "8", "16", "32", "64", "Target"],
+            default="Any",
             key="rev_source",
             format_func=lambda s: (
                 "Use Target" if s == "Target"
-                else "Try all sizes" if s == "All"
+                else "Detect (any width)" if s == "Any"
                 else f"{s}-bit at end"
             ),
             help=(
                 "**Where does the CRC come from?**\n\n"
-                "- **Use Target** — type the CRC value into the Target CRC "
-                "field.\n"
-                "- **Try all sizes** — peel a trailing CRC of every common "
-                "width (8 / 16 / 32 / 64) off the input data and search "
-                "them all.  Use when the CRC width is unknown.\n"
-                "- **8 / 16 / 32 / 64** — same as Try all sizes but "
-                "restricted to that one width.\n\n"
-                "**How the trailing CRC is parsed in end-of-data modes:**\n\n"
-                "- In **Text** mode, the last `N/4` hex chars are the CRC "
-                "(e.g. for 16-bit, the last 4 chars `9CE1` → `0x9CE1`).  "
-                "Several boundary interpretations are tried — strict, "
-                "`0x` prefix peel, trailing-whitespace strip on the "
-                "payload — and each match is annotated with which one hit.\n"
-                "- In **Hex** mode, the input is bytes; the last `N/8` "
-                "bytes are interpreted big-endian (or with opposite "
-                "endianness if that checkbox is on).\n\n"
-                "In all end-of-data modes, the Target CRC field is ignored."
+                "- **Detect (any width)** — the trailing bytes/chars of the "
+                "input *are* the CRC.  `detect()` searches every catalog "
+                "algorithm at every width.\n"
+                "- **8 / 16 / 32 / 64** — same, restricted to algorithms "
+                "of that width via the `crc<W>*` glob.\n"
+                "- **Use Target** — type the CRC value into a separate "
+                "field; the input is the payload only.\n\n"
+                "In all end-of-data modes both byte orders are tried "
+                "automatically."
             ),
-        ) or "Target"
-        try_all_sizes = rev_source == "All"
-        end_of_data = rev_source not in ("Target",)
-        end_width = int(rev_source) if rev_source not in ("Target", "All") else 0
+        ) or "Any"
+        end_of_data = rev_source != "Target"
+        end_width = int(rev_source) if rev_source not in ("Target", "Any") else 0
 
-        with target_col:
+        if not end_of_data:
             rev_target_raw = st.text_input(
                 "Target CRC (hex)",
                 placeholder="0xcbf43926",
-                disabled=end_of_data,
-                help="The CRC value you're trying to match.  Up to 64 bits.",
+                help=(
+                    "The CRC value you're trying to match.  Up to 64 "
+                    "bits.  Both byte orderings are tried automatically: "
+                    "matches that hit on the byte-reversed reading of "
+                    "the value come back flagged with `Endian: Little` "
+                    "so you can see when the protocol's wire format is "
+                    "little-endian."
+                ),
                 key="rev_target",
             )
+        else:
+            rev_target_raw = ""
 
-        if try_all_sizes and rev_input_mode == "Text":
+        if end_of_data and rev_input_mode == "Text":
             _input_label = (
-                "Input data (trailing 2 / 4 / 8 / 16 hex chars are tried as "
-                "8 / 16 / 32 / 64-bit CRCs)"
-            )
-        elif try_all_sizes:
-            _input_label = (
-                "Input data (last 1 / 2 / 4 / 8 bytes are tried as "
-                "8 / 16 / 32 / 64-bit CRCs)"
-            )
-        elif end_of_data and rev_input_mode == "Text":
-            _hex_chars = end_width // 4
-            _input_label = (
-                f"Input data (the last {_hex_chars} chars are parsed as the "
-                f"{end_width}-bit hex CRC)"
+                "Input data (payload + trailing hex CRC; framing detected "
+                "automatically)"
             )
         elif end_of_data:
-            _n = end_width // 8
             _input_label = (
-                f"Input data (the last {_n} byte"
-                f"{'' if _n == 1 else 's'} are taken as the CRC)"
+                "Input data (payload + trailing CRC bytes; framing detected "
+                "automatically)"
             )
         else:
             _input_label = "Input data (bytes that produced the CRC)"
@@ -1156,27 +1123,6 @@ def render_reverse_tab() -> None:
             key="rev_text",
         )
 
-        try_endian = st.checkbox(
-            "Try big/little endian",
-            value=False,
-            key="rev_try_endian",
-            help=(
-                "Catches the common endianness mismatch where the captured "
-                "CRC bytes were transcribed in the opposite order from what "
-                "the protocol actually uses on the wire.\n\n"
-                "- In **Use Target** mode: tries the typed target as-is "
-                "*and* with its bytes reversed (byte-aligned widths only — "
-                "8 / 16 / 24 / 32 / 40 / 48 / 56 / 64).\n"
-                "- In **end-of-data** modes (Hex): interprets the trailing "
-                "bytes both as big-endian (network order, the default) and "
-                "little-endian.\n"
-                "- In **end-of-data** modes (Text): also tries the byte-"
-                "reversed form of the parsed target integer.\n\n"
-                "Matches found via the opposite interpretation are flagged "
-                "with a `↔ opposite endianness` pill."
-            ),
-        )
-
         target_required = not end_of_data
         _, rev_btn_col = st.columns([3, 1], vertical_alignment="bottom")
         with rev_btn_col:
@@ -1194,183 +1140,81 @@ def render_reverse_tab() -> None:
     if not rev_go:
         return
 
-    # Dispatch paths -- input parsing differs by mode:
-    #
-    #   Try all sizes (either input format): run each of 8/16/32/64 in
-    #     sequence and aggregate matches.  Width annotation per result row
-    #     distinguishes which width hit.
-    #   Text + end-of-data: split the input string at the last 2N chars
-    #     (where N = end_width // 8).  Trailing chars become a hex integer
-    #     target, leading chars are the payload (UTF-8 encoded).
-    #   Hex + end-of-data: hex-decode the whole input; last N bytes are the
-    #     CRC interpreted as BE (and optionally LE) integer; rest is payload.
-    #   Target (either input format): parse the input as bytes; target comes
-    #     from the separate Target CRC field.
-    target_display: str
-    text_end_of_data = end_of_data and rev_input_mode == "Text" and not try_all_sizes
-    hex_end_of_data = end_of_data and rev_input_mode == "Hex" and not try_all_sizes
-
-    if try_all_sizes:
-        matches = []
-        with st.status(
-            "Searching all common widths (8 / 16 / 32 / 64)...",
-            expanded=False,
-        ) as _status:
-            for w in (8, 16, 32, 64):
-                _status.write(f"trying {w}-bit algorithms...")
-                if rev_input_mode == "Text":
-                    if len(rev_text) < w // 4:
-                        continue
-                    partial = find_matching_algorithms_text_end(
-                        rev_text, w, try_endian=try_endian,
-                    )
-                    matches.extend([(m[0], m[1], m[2]) for m in partial])
-                else:
-                    try:
-                        _bytes = parse_hex_bytes(rev_text)
-                    except ValueError as _e:
-                        _status.write(f"hex parse failed: {_e}")
-                        continue
-                    if not _bytes or len(_bytes) < w // 8:
-                        continue
-                    partial = find_matching_algorithms_at_end(
-                        _bytes, w, try_endian=try_endian,
-                    )
-                    matches.extend([(m[0], m[1], "") for m in partial])
-            _status.update(
-                label=(
-                    f"Searched 8 / 16 / 32 / 64-bit widths · "
-                    f"{len(matches)} match{'' if len(matches) == 1 else 'es'} found"
-                ),
-                state="complete",
-            )
-        # rev_data + target_display + input_summary for the Result header.
-        if rev_input_mode == "Text":
-            rev_data = rev_text.encode("utf-8")
-        else:
-            try:
-                rev_data = parse_hex_bytes(rev_text)
-            except ValueError as e:
-                st.error(f"Input data: {e}")
-                st.stop()
-        input_summary = (
-            f"{len(rev_data):,} byte input · tried widths 8 / 16 / 32 / 64"
-        )
-        no_match_target_display = "this input under any of widths 8 / 16 / 32 / 64"
-
-    elif text_end_of_data:
-        hex_chars = end_width // 4
-        if len(rev_text) < hex_chars:
-            st.error(
-                f"Input has {len(rev_text)} char"
-                f'{"" if len(rev_text) == 1 else "s"}; '
-                f"need at least {hex_chars} trailing hex chars for a "
-                f"{end_width}-bit CRC."
-            )
-            st.stop()
-        # Multi-boundary search: tries strict, 0x-prefix-peeled, and
-        # whitespace-stripped variants of the boundary.  Each match
-        # carries the boundary label that produced it.
-        raw_matches = find_matching_algorithms_text_end(
-            rev_text, end_width, try_endian=try_endian,
-        )
-        # Normalize to (info, endian_annotation, boundary_label) so the
-        # renderer below has one shape across all three dispatch modes.
-        matches = [(m[0], m[1], m[2]) for m in raw_matches]
-        nibbles = end_width // 4
-        trail = rev_text[-hex_chars:]
+    # Dispatch -- end-of-data delegates the whole framing problem to
+    # detect_chunk; Target mode keeps the catalog search since its
+    # shape (separate target + payload) doesn't fit detect().
+    if end_of_data:
+        # The Text/Hex toggle maps straight to crcglot's mode: 'text'
+        # means "literal payload + trailing hex CRC" framing, 'hex'
+        # means "the whole input is hex-encoded bytes, strip separators
+        # and decode."  crcglot does the decoding/framing itself for
+        # both -- no local parse_hex_bytes step needed.
+        detect_mode = "hex" if rev_input_mode == "Hex" else "text"
         try:
-            crc_value = int(trail, 16)
-            target_display = f"0x{crc_value:0{nibbles}X}"
-        except ValueError:
-            target_display = f"`{trail}` (last {hex_chars} chars; not parseable as hex)"
-        # Use the strict-mode payload length for the summary.  Other
-        # boundary variants are tried internally but the user typically
-        # cares about the literal split.
-        rev_data = rev_text[:-hex_chars].encode("utf-8")
-        input_summary = (
-            f"{len(rev_data):,} byte text payload · {end_width}-bit trailing "
-            f"hex CRC = {target_display}"
-        )
-        no_match_target_display = target_display
-
-    elif hex_end_of_data:
-        try:
-            rev_data = parse_hex_bytes(rev_text)
+            matches = detect_chunk(
+                rev_text, width=end_width or None, mode=detect_mode,
+            )
         except ValueError as e:
             st.error(f"Input data: {e}")
             st.stop()
-        if not rev_data:
-            st.error("Input data is empty after stripping separators.")
-            st.stop()
-        n = end_width // 8
-        if len(rev_data) < n:
-            st.error(
-                f"Input has {len(rev_data)} byte"
-                f'{"" if len(rev_data) == 1 else "s"}; '
-                f"need at least {n} for a {end_width}-bit CRC at end."
-            )
-            st.stop()
-        raw_matches = find_matching_algorithms_at_end(
-            rev_data, end_width, try_endian=try_endian,
-        )
-        # Normalize to (info, endian_annotation, boundary_label).
-        # Hex+end-of-data has no boundary ambiguity, so the label is "".
-        matches = [(m[0], m[1], "") for m in raw_matches]
-        crc_bytes = rev_data[-n:]
-        target_be = int.from_bytes(crc_bytes, "big")
-        target_le = int.from_bytes(crc_bytes, "little")
-        nibbles = end_width // 4
-        if target_be == target_le:
-            target_display = f"0x{target_be:0{nibbles}X}"
-        else:
-            target_display = (
-                f"0x{target_be:0{nibbles}X} (BE) / "
-                f"0x{target_le:0{nibbles}X} (LE)"
-            )
-        payload_len = len(rev_data) - n
         input_summary = (
-            f"{payload_len:,} byte payload · {end_width}-bit trailing CRC "
-            f"= {target_display}"
+            f"{len(rev_text):,} char {rev_input_mode.lower()} input · "
+            f"{'any width' if end_width == 0 else f'{end_width}-bit'}"
         )
-        no_match_target_display = target_display
+        no_match_target_display = (
+            f"this input under "
+            f"{'any catalog width' if end_width == 0 else f'width {end_width}'}"
+        )
 
     else:
-        # Target mode -- separate Target CRC field, full input is the payload.
-        if rev_input_mode == "Hex":
-            try:
-                rev_data = parse_hex_bytes(rev_text)
-            except ValueError as e:
-                st.error(f"Input data: {e}")
-                st.stop()
-            if not rev_data:
-                st.error("Input data is empty after stripping separators.")
-                st.stop()
-        else:
-            rev_data = rev_text.encode("utf-8")
+        # Target mode -- the user supplies the CRC value separately;
+        # the whole input is the payload.  Deferred to crcglot's
+        # detect(target_crc=...) which loops the catalog itself,
+        # respects the algorithms glob, and reports endianness as
+        # "Big" by convention (no byte parsing happens in this path).
         target, target_err = parse_hex(rev_target_raw, "Target CRC", 64)
         if target_err:
             st.error(target_err)
             st.stop()
         assert target is not None
-        raw_matches = find_matching_algorithms(
-            rev_data, target, try_endian=try_endian,
-        )
-        # Normalize to (info, endian_annotation, boundary_label).
-        # Target mode has no boundary ambiguity.
-        matches = [(m[0], m[1], "") for m in raw_matches]
+        detect_mode = "hex" if rev_input_mode == "Hex" else "text"
+        try:
+            matches = detect_chunk(
+                rev_text, mode=detect_mode, target_crc=target,
+            )
+        except ValueError as e:
+            st.error(f"Input data: {e}")
+            st.stop()
         target_display = f"0x{target:X}"
         input_summary = (
-            f"{len(rev_data):,} byte"
-            f'{"" if len(rev_data) == 1 else "s"} input · target '
-            f"`{target_display}`"
+            f"{len(rev_text):,} char {rev_input_mode.lower()} payload · "
+            f"target `{target_display}`"
         )
         no_match_target_display = f"`{target_display}`"
 
     bump_stats(REVERSE_KEY)
 
     with st.container(border=True):
-        st.markdown('<span class="crc-section">View Result</span>', unsafe_allow_html=True)
+        st.subheader(
+            "View Result",
+            help=(
+                "**What each match pill means** "
+                "(click any pill for its own tooltip):\n\n"
+                "- **green ✓ name** — the matched catalog algorithm.\n"
+                "- **Width** — the CRC's bit width (8 / 16 / 32 / 64).\n"
+                "- **Endian** — byte order used to read the trailing CRC "
+                "bytes.  **Big** is the natural / network-order reading "
+                "(most common).  **Little** means the bytes were "
+                "byte-reversed before they matched.\n"
+                "- **Sep** — character `detect()` found between the "
+                "payload and the hex CRC in the input.\n"
+                "- **Prefix** — a hex prefix (typically `0x`) detected "
+                "immediately before the CRC.\n"
+                "- **Hex** — case of the CRC's hex digits in the input.\n\n"
+                "*Sep / Prefix / Hex only appear for Text-mode matches; "
+                "Binary and Target modes have no boundary ambiguity.*"
+            ),
+        )
 
         if matches:
             plural = "es" if len(matches) != 1 else ""
@@ -1378,42 +1222,47 @@ def render_reverse_tab() -> None:
                 f"**\U0001F50D Found {len(matches)} match{plural}**  "
                 f"·  *{input_summary}*"
             )
-            for info, annotation, boundary_label in matches:
-                badge = ""
-                if annotation:
-                    badge = (
-                        f'<span class="crc-stat-pill crc-match-ok '
-                        f'crc-annotation-pill">↔ {annotation}</span>'
+            for info, endian, padding in matches:
+                # Row 1: the green algorithm-name badge (the "we found
+                # it" anchor for this match).
+                st.badge(
+                    info.name,
+                    color="green",
+                    icon=":material/check:",
+                    help="The matched catalog algorithm name.",
+                )
+                # Row 2: horizontal row of neutral metadata badges, each
+                # carrying its own click-tooltip.  Width / Endian always
+                # shown; Sep / Prefix / Hex come from detect()'s padding
+                # info and only appear for Text-mode matches.
+                with st.container(horizontal=True, gap="small"):
+                    st.badge(
+                        f"Width: {info.width}",
+                        color="gray",
+                        help="The CRC's bit width in bits.",
                     )
-                boundary_extra = (
-                    f' · boundary: <em>{boundary_label}</em>'
-                    if boundary_label
-                    else ""
-                )
-                st.markdown(
-                    f'<span class="crc-stat-pill crc-match-ok">'
-                    f'✓ {info.name}</span>'
-                    f'{badge}'
-                    f'<span class="crc-match-expected">'
-                    f'width {info.width}'
-                    f'{boundary_extra}'
-                    f'</span>',
-                    unsafe_allow_html=True,
-                )
+                    st.badge(
+                        f"Endian: {endian}",
+                        color="gray",
+                        help=(
+                            "Byte order used to read the trailing CRC "
+                            "bytes.\n\n"
+                            "- **Big** = natural / network-order reading "
+                            "(most common).\n"
+                            "- **Little** = byte-reversed; common when a "
+                            "protocol serializes the CRC little-endian "
+                            "on the wire."
+                        ),
+                    )
+                    for label, pill_help in padding_pills(padding):
+                        st.badge(label, color="gray", help=pill_help)
                 if info.desc:
                     st.caption(info.desc)
         else:
-            hint = ""
-            if not try_endian:
-                hint = (
-                    "- Try the **Try big/little endian** checkbox above "
-                    "to catch endianness mismatches\n"
-                )
             st.warning(
                 f"No catalog algorithm produces {no_match_target_display} "
                 f"for this input.\n\n"
                 "Common reasons:\n"
-                f"{hint}"
                 "- Custom polynomial (not in the reveng catalogue)\n"
                 "- Input bytes don't exactly match the captured payload "
                 "(extra/missing header bytes, trailing checksum included, etc.)\n"
@@ -1441,29 +1290,32 @@ def render_footer() -> None:
     calc_total = stats.get(CALC_KEY, 0)
     rev_total = stats.get(REVERSE_KEY, 0)
 
-    def pill(label: str, count: int) -> str:
-        zero_cls = " crc-stat-pill-zero" if count == 0 else ""
-        return (
-            f'<span class="crc-stat-pill{zero_cls}">'
-            f'{label} <strong>{count}</strong></span>'
+    st.caption(
+        f"**{gen_total} generation{'' if gen_total == 1 else 's'}**"
+        f" · **{calc_total} calculation{'' if calc_total == 1 else 's'}**"
+        f" · **{rev_total} search{'' if rev_total == 1 else 'es'}**"
+    )
+    with st.container(horizontal=True, gap="small"):
+        for code, info in LANGUAGES.items():
+            count = stats.get(code, 0)
+            st.badge(
+                f"{info.emoji} {info.display_name}: {count}",
+                color="gray",
+                help=(
+                    f"Number of times someone generated CRC code in "
+                    f"{info.display_name} via this app."
+                ),
+            )
+        st.badge(
+            f"\U0001F9EE Calculate: {calc_total}",
+            color="gray",
+            help="Number of times someone clicked **Calculate** in either Calc tab.",
         )
-
-    pills = "".join(
-        pill(f"{info.emoji} {info.display_name}", stats.get(code, 0))
-        for code, info in LANGUAGES.items()
-    )
-    pills += pill("\U0001F9EE Calculate", calc_total)
-    pills += pill("\U0001F50D Reverse", rev_total)
-
-    st.markdown(
-        f'<div class="crc-stats-totals">'
-        f'{gen_total} generation{"" if gen_total == 1 else "s"}'
-        f' &middot; {calc_total} calculation{"" if calc_total == 1 else "s"}'
-        f' &middot; {rev_total} search{"" if rev_total == 1 else "es"}'
-        f'</div>'
-        f'<div class="crc-stats">{pills}</div>',
-        unsafe_allow_html=True,
-    )
+        st.badge(
+            f"\U0001F50D Reverse: {rev_total}",
+            color="gray",
+            help="Number of times someone clicked **Reverse Lookup**.",
+        )
 
     rev = git_revision()
     rev_sha = rev[:-len("-dirty")] if rev.endswith("-dirty") else rev

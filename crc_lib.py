@@ -15,16 +15,28 @@ import subprocess
 import tomllib
 from importlib.metadata import PackageNotFoundError, version as pkg_version
 from pathlib import Path
+from typing import Literal
 
 from crcglot import (
     ALGORITHMS,
     AlgorithmInfo,
     LANGUAGES,
+    detect,
+    encode_int,
     generic_crc,
 )
 
+# Optional / newer symbol -- isolated so a missing or stale crcglot can't
+# crash the whole app at import time.  Empty tuple = FAQ credits section
+# is omitted; everything else keeps working.
+try:
+    from crcglot import ACKNOWLEDGMENTS
+except ImportError:
+    ACKNOWLEDGMENTS = ()
+
 # crcglot symbols re-exported so ui.py only needs to import from crc_lib.
 __all__ = [
+    "ACKNOWLEDGMENTS",
     "ALGORITHMS",
     "AlgorithmInfo",
     "LANGUAGES",
@@ -35,15 +47,13 @@ __all__ = [
     "REVERSE_KEY",
     "SENTINEL_CUSTOM",
     "VARIANTS",
-    "VARIANT_ORDER",
     "catalogue_names",
-    "_crc_compute",
-    "_byte_reverse",
+    "encode_int",
+    "generic_crc",
     "parse_hex",
     "parse_hex_bytes",
-    "find_matching_algorithms",
-    "find_matching_algorithms_at_end",
-    "find_matching_algorithms_text_end",
+    "detect_chunk",
+    "padding_pills",
     "available_variants",
     "generate_catalogue",
     "generate_custom",
@@ -73,7 +83,6 @@ VARIANTS: dict[str, tuple[str, str, str]] = {
     "table":   ("▦", "Table-driven", "256-entry LUT; ~2-4x faster than bit-by-bit."),
     "slice8":  ("▩", "Slice-by-8",   "8 LUTs; another ~2-4x faster (32/64-bit CRCs only)."),
 }
-VARIANT_ORDER: tuple[str, ...] = ("bitwise", "table", "slice8")
 
 # Width ascending, then name ascending: groups crc8 -> 16 -> 32 -> 64 in the picker.
 catalogue_names = sorted(
@@ -81,9 +90,6 @@ catalogue_names = sorted(
 )
 
 _HEX_STRIP_RE = re.compile(r"0x|0X|[:,\s]")
-
-# Internal alias kept for ui.py compatibility (was the streamlit-time import name).
-_crc_compute = generic_crc
 
 
 # ---------- Version helpers ----------
@@ -256,29 +262,6 @@ def bump_stats(key: str) -> dict[str, int]:
 
 # ---------- Pure helpers ----------
 
-def _byte_reverse(value: int, width: int) -> int | None:
-    """Reverse the byte order of ``value`` interpreted at ``width`` bits.
-
-    For example, ``_byte_reverse(0x12345678, 32)`` returns ``0x78563412``.
-
-    Args:
-        value: The integer to reverse.  Must fit in ``width`` bits.
-        width: Bit width of the value.  Must be a positive multiple of 8 so
-            the value packs into whole bytes.
-
-    Returns:
-        The byte-reversed integer, or ``None`` when reversal isn't
-        well-defined: ``width`` not a positive multiple of 8, or ``value``
-        out of range for that width.
-    """
-    if width <= 0 or width % 8:
-        return None
-    n = width // 8
-    if value < 0 or value >= (1 << width):
-        return None
-    return int.from_bytes(value.to_bytes(n, "big")[::-1], "big")
-
-
 def parse_hex(raw: str, label: str, width: int) -> tuple[int | None, str | None]:
     """Parse a single hex integer constrained to ``width`` bits.
 
@@ -341,190 +324,158 @@ def parse_hex_bytes(s: str) -> bytes:
     return bytes.fromhex(cleaned)
 
 
-# ---------- Search ----------
+DetectMode = Literal["auto", "binary", "text", "hex"]
 
-def find_matching_algorithms(
-    data: bytes,
-    target: int,
-    try_endian: bool = False,
-) -> list[tuple[AlgorithmInfo, str | None]]:
-    """Search the catalog for algorithms producing ``target`` on ``data``.
+
+def detect_chunk(
+    chunk: bytes | str,
+    width: int | None = None,
+    mode: DetectMode | None = None,
+    target_crc: int | None = None,
+) -> list[tuple[AlgorithmInfo, str | None, object | None]]:
+    """Find catalog algorithms whose CRC sits at the end of a single chunk.
+
+    Thin wrapper around :func:`crcglot.detect`.  We pass the chunk in
+    single-packet form (no multi-packet intersection) and surface the
+    candidates in the ``(info, endian, padding)`` shape the renderer
+    consumes.  ``mode`` is forced rather than letting ``detect``'s
+    ``mode="auto"`` guess -- auto-mode currently picks differently
+    depending on whether an ``algorithms`` filter was passed, which made
+    "Any width" and "<N>-bit at end" disagree on text inputs that *look*
+    like hex.
 
     Args:
-        data: The input bytes that the algorithm's CRC should produce
-            ``target`` over.
-        target: The CRC value to match.  Tested against each algorithm's
-            CRC of ``data``; algorithms whose width can't represent
-            ``target`` are skipped.
-        try_endian: When True, also tests :func:`_byte_reverse` of the
-            target for each algorithm whose width is a multiple of 8 --
-            catches the common endianness mismatch where the captured CRC
-            bytes were transcribed in the opposite order from what the
-            protocol uses on the wire.
+        chunk: Bytes (binary packet) or str (text or hex-encoded packet).
+            In end-of-data mode (``target_crc=None``) this is payload +
+            trailing CRC; in target_crc mode this is data only.
+        width: Optional CRC width filter in bits (8 / 16 / 32 / 64).
+            Translated to the algorithm glob ``"crc<width>*"`` -- a clean
+            one-to-one match against the catalogue.  ``None`` means search
+            every width.
+        mode: ``"text"`` / ``"hex"`` / ``"binary"``.  When ``None``
+            (default), inferred from the chunk type: str -> ``"text"``,
+            bytes -> ``"binary"``.  Pass ``"hex"`` explicitly to ask
+            crcglot to hex-decode a string into bytes first.
+        target_crc: When supplied, treat ``chunk`` as data only (no CRC
+            extracted from the tail) and find catalog algorithms whose
+            CRC of the data equals this value.  In this mode the
+            returned ``endian`` is always ``"Big"`` and ``padding`` is
+            ``None`` -- crcglot doesn't byte-parse a CRC in this path.
 
     Returns:
-        A list of ``(info, annotation)`` tuples for each match.
-        ``annotation`` is ``None`` for a direct match or
-        ``"opposite endianness"`` when only the byte-reversed comparison hit.
+        A list of ``(info, endian, padding)`` tuples.  ``endian`` is
+        ``"Big"`` or ``"Little"``.  ``padding`` is crcglot's
+        ``TextFormat`` / ``HexFormat`` describing how the boundary was
+        parsed, or ``None`` (binary input, or ``target_crc`` mode).
     """
-    matches: list[tuple[AlgorithmInfo, str | None]] = []
-    for info in ALGORITHMS.values():
-        target_rev = _byte_reverse(target, info.width) if try_endian else None
-        mask = (1 << info.width) - 1
-        if target > mask and (target_rev is None or target_rev > mask):
-            continue
-        value = _crc_compute(
-            data, info.width, info.poly, info.init,
-            info.refin, info.refout, info.xorout,
+    glob = f"crc{width}*" if width else None
+    if mode is None:
+        mode = "text" if isinstance(chunk, str) else "binary"
+    result = detect(
+        chunk, mode=mode, match="all", algorithms=glob, target_crc=target_crc,
+    )
+    return [
+        (
+            cand.info,
+            "Little" if cand.endianness == "little" else "Big",
+            cand.padding,
         )
-        if target <= mask and value == target:
-            matches.append((info, None))
-        elif target_rev is not None and target_rev <= mask and value == target_rev:
-            matches.append((info, "opposite endianness"))
-    return matches
+        for cand in result.candidates
+    ]
 
 
-def find_matching_algorithms_text_end(
-    text: str,
-    width: int,
-    try_endian: bool = False,
-) -> list[tuple[AlgorithmInfo, str | None, str, int]]:
-    """Reverse-lookup against text whose trailing chars are a hex CRC.
-
-    Because this is a reverse lookup -- the user is *guessing* both the
-    algorithm and the framing -- we try several plausible boundary
-    interpretations and return matches annotated with which one hit:
-
-        - **strict**: last ``width//4`` chars are the hex CRC, everything
-          before is the payload.
-        - **0x prefix peeled**: if the chars immediately before the
-          trailing hex are ``0x`` or ``0X``, peel them.
-        - Each of the above with the payload's trailing whitespace
-          stripped.
+def _human_separator(sep: str) -> str:
+    """Name a separator string for display -- keyboard-key words for
+    whitespace, literal backtick form for visible punctuation.
 
     Args:
-        text: Full input string (payload concatenated with trailing hex
-            CRC, possibly with whitespace and/or ``0x`` prefix in between).
-        width: CRC width in bits.  Must satisfy ``width % 4 == 0`` and the
-            text must have at least ``width // 4`` characters.  Catalog
-            search is restricted to algorithms of this width.
-        try_endian: Forwarded to :func:`find_matching_algorithms` -- when
-            True, also tests the byte-reversed target per algorithm.
+        sep: The raw separator (e.g. ``" "``, ``"\\t"``, ``":"``, ``""``).
 
     Returns:
-        A list of ``(info, endian_annotation, boundary_label, payload_len)``
-        tuples, deduped by ``(info.name, payload_bytes, target,
-        endian_annotation)``.  Empty when the text is too short or the
-        trailing chars under no interpretation parse as hex.
+        ``"NONE"`` for empty, ``"SPACE"`` / ``"TAB"`` / ``"NEWLINE"`` /
+        ``"CRLF"`` for single whitespace chars, ``"<n> SPACES"`` /
+        ``"<n> TABS"`` for runs of the same whitespace, otherwise the raw
+        string wrapped in backticks for inline-code rendering.
     """
-    hex_chars = width // 4
-    if width <= 0 or width % 4 or len(text) < hex_chars:
-        return []
-
-    def is_hex(s: str) -> bool:
-        return bool(s) and all(c in "0123456789abcdefABCDEF" for c in s)
-
-    # Build the list of boundary interpretations.  Each entry is
-    # (payload_text, crc_hex_text, label).
-    variants: list[tuple[str, str, str]] = []
-
-    # Strict: last hex_chars are the CRC.
-    trail = text[-hex_chars:]
-    if is_hex(trail):
-        variants.append((text[:-hex_chars], trail, "strict"))
-
-    # 0x prefix peel: if the chars immediately before the trailing hex are
-    # "0x" or "0X", treat those 2 chars as a prefix to discard.
-    if len(text) >= hex_chars + 2:
-        prefix = text[-(hex_chars + 2):-hex_chars]
-        if prefix.lower() == "0x" and is_hex(trail):
-            variants.append(
-                (text[:-(hex_chars + 2)], trail, "0x prefix peeled")
-            )
-
-    # Add whitespace-stripped versions of each variant where stripping
-    # actually changes the payload.
-    for v_pay, v_crc, v_label in list(variants):
-        stripped = v_pay.rstrip()
-        if stripped != v_pay:
-            variants.append(
-                (stripped, v_crc, f"{v_label} + trailing whitespace stripped")
-            )
-
-    if not variants:
-        return []
-
-    # Search each variant; dedupe so multiple boundary interpretations
-    # producing the same (payload, target) only yield one row per algorithm.
-    seen: set[tuple[str, bytes, int, str | None]] = set()
-    results: list[tuple[AlgorithmInfo, str | None, str, int]] = []
-    for payload_text, crc_text, label in variants:
-        payload_bytes = payload_text.encode("utf-8")
-        target = int(crc_text, 16)
-        raw = find_matching_algorithms(payload_bytes, target, try_endian=try_endian)
-        for info, endian_ann in raw:
-            if info.width != width:
-                continue
-            key = (info.name, payload_bytes, target, endian_ann)
-            if key in seen:
-                continue
-            seen.add(key)
-            results.append((info, endian_ann, label, len(payload_bytes)))
-    return results
+    if not sep:
+        return "NONE"
+    if sep == " ":
+        return "SPACE"
+    if sep == "\t":
+        return "TAB"
+    if sep == "\n":
+        return "NEWLINE"
+    if sep == "\r\n":
+        return "CRLF"
+    if all(c == " " for c in sep):
+        return f"{len(sep)} SPACES"
+    if all(c == "\t" for c in sep):
+        return f"{len(sep)} TABS"
+    return f"`{sep}`"
 
 
-def find_matching_algorithms_at_end(
-    data: bytes,
-    width: int,
-    try_endian: bool = True,
-) -> list[tuple[AlgorithmInfo, str | None]]:
-    """Search the catalog assuming the trailing bytes of ``data`` are the CRC.
+def padding_pills(padding: object | None) -> list[tuple[str, str]]:
+    """Return per-pill ``(label, help)`` pairs for a ``DetectMatch.padding``.
 
-    Takes the last ``width // 8`` bytes of ``data`` as the candidate CRC and
-    everything before as the payload to hash.  Restricts the search to
-    catalog algorithms whose width matches.
+    Used to surface ``detect()``'s boundary interpretation so the user can
+    verify it matches what they pasted.  Each pair maps to one
+    :func:`streamlit.badge` call: the label goes on the badge, the help
+    string powers its click-tooltip.  Empty list for binary input
+    (``padding=None``) since there's no boundary ambiguity to describe.
 
     Args:
-        data: Full captured bytes -- payload + trailing CRC.
-        width: CRC width in bits.  Must be a positive multiple of 8.  Only
-            algorithms with exactly this width are tested.
-        try_endian: When True (default), tests both big-endian and
-            little-endian interpretations of the trailing bytes.  When
-            False, only big-endian.
+        padding: The ``padding`` attribute of a ``DetectMatch`` --
+            ``TextFormat`` (text mode), ``HexFormat`` (hex-text auto-decode
+            mode), or ``None`` (binary mode).
 
     Returns:
-        A list of ``(info, annotation)`` tuples for each match.
-        ``annotation`` is ``None`` for a direct big-endian match (the
-        natural reading), or ``"opposite endianness"`` when only the
-        little-endian interpretation matched.  Returns ``[]`` if ``width``
-        isn't a positive multiple of 8, or if ``data`` is shorter than the
-        trailing CRC width.
+        A list of ``(label, help_markdown)`` tuples in render order:
+        separator, then prefix (when present), then case.  Empty list when
+        there's nothing to describe.
     """
-    if width <= 0 or width % 8:
+    if padding is None:
         return []
-    n = width // 8
-    if len(data) < n:
-        return []
-    payload = data[:-n]
-    crc_bytes = data[-n:]
-    target_be = int.from_bytes(crc_bytes, "big")
-    target_le = int.from_bytes(crc_bytes, "little")
 
-    matches: list[tuple[AlgorithmInfo, str | None]] = []
-    for info in ALGORITHMS.values():
-        if info.width != width:
-            continue
-        value = _crc_compute(
-            payload, info.width, info.poly, info.init,
-            info.refin, info.refout, info.xorout,
+    pills: list[tuple[str, str]] = []
+
+    # Separator: both TextFormat and HexFormat have one, under different names.
+    sep = getattr(padding, "separator", None)
+    if sep is None:
+        sep = getattr(padding, "byte_separator", None)
+    if sep is not None:
+        pills.append((
+            f"Sep: {_human_separator(sep)}",
+            "Character `detect()` found between the payload and the hex "
+            "CRC in the input.\n\n"
+            "- `SPACE` / `TAB` / `NEWLINE` / `CRLF` for whitespace.\n"
+            "- Punctuation shown literally (e.g. `` `:` ``, `` `,` ``).\n"
+            "- `NONE` if the CRC sat directly against the payload.",
+        ))
+
+    # Prefix: TextFormat.hex_prefix, HexFormat.prefix (+ prefix_per_byte flag).
+    prefix = getattr(padding, "hex_prefix", None)
+    if prefix is None:
+        prefix = getattr(padding, "prefix", None)
+    if prefix:
+        per_byte = (
+            " (per byte)" if getattr(padding, "prefix_per_byte", False) else ""
         )
-        if value == target_be:
-            # Direct (BE) match -- emit no extra annotation.  For width 8
-            # BE == LE so there's literally no distinction to draw.
-            matches.append((info, None))
-        elif try_endian and target_be != target_le and value == target_le:
-            matches.append((info, "opposite endianness"))
-    return matches
+        pills.append((
+            f"Prefix: {prefix}{per_byte}",
+            "A hex prefix (typically `0x`) detected immediately before "
+            "the CRC.  `(per byte)` means every byte in the input was "
+            "prefixed individually, not just the trailing CRC.",
+        ))
+
+    # Case of the hex CRC characters.
+    case = "Upper" if getattr(padding, "uppercase", False) else "Lower"
+    pills.append((
+        f"Hex: {case}",
+        "Case of the hex digits in the input: `Upper` (e.g. `CBF43926`) "
+        "or `Lower` (e.g. `cbf43926`).",
+    ))
+
+    return pills
 
 
 # ---------- crcglot wrappers ----------
@@ -532,39 +483,19 @@ def find_matching_algorithms_at_end(
 def available_variants(code: str, width: int) -> list[str]:
     """Return the implementation variants a language supports at a given width.
 
-    Filters :data:`VARIANT_ORDER` against the language's declared
-    ``variants`` set and drops ``"slice8"`` for widths other than 32 / 64
-    (it only pays off as an optimization at those native sizes).
+    Deferred to ``LanguageInfo.variants_for_width`` -- crcglot owns the
+    "which variants work at which widths" rule (e.g. slice8 only
+    pays off at 32 / 64).
 
     Args:
         code: crcglot language code (e.g. ``"c"``, ``"python"``).
         width: CRC width in bits.
 
     Returns:
-        Variant codes in canonical display order (bitwise, table, slice8).
+        Variant codes in canonical display order (as returned by
+        crcglot: bitwise, table, slice8).
     """
-    supported = LANGUAGES[code].variants
-    return [
-        v for v in VARIANT_ORDER
-        if v in supported and not (v == "slice8" and width not in (32, 64))
-    ]
-
-
-def _kwargs_for_variant(variant: str) -> dict:
-    """Translate a variant name into the kwargs that crcglot generators accept.
-
-    Args:
-        variant: One of ``"bitwise"``, ``"table"``, ``"slice8"``.
-
-    Returns:
-        Empty dict for bitwise (the generator's default); ``{"table": True}``
-        for table; ``{"slice8": True}`` for slice-by-8.
-    """
-    if variant == "table":
-        return {"table": True}
-    if variant == "slice8":
-        return {"slice8": True}
-    return {}
+    return list(LANGUAGES[code].variants_for_width(width))
 
 
 def generate_catalogue(lang: str, name: str, variant: str, symbol: str):
@@ -581,7 +512,7 @@ def generate_catalogue(lang: str, name: str, variant: str, symbol: str):
         or a tuple of strings for multi-file languages (e.g. C's ``.h``/``.c``).
     """
     return LANGUAGES[lang].generator(
-        name, symbol=symbol or None, **_kwargs_for_variant(variant),
+        name, symbol=symbol or None, variant=variant,
     )
 
 
@@ -601,7 +532,7 @@ def generate_custom(lang: str, name: str, entry: AlgorithmInfo, variant: str, sy
         The generator's output -- shape mirrors :func:`generate_catalogue`.
     """
     return LANGUAGES[lang].generator_from_entry(
-        name, entry, symbol=symbol or None, **_kwargs_for_variant(variant),
+        name, entry, symbol=symbol or None, variant=variant,
     )
 
 

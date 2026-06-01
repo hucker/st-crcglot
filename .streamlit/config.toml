@@ -7,3 +7,6 @@ font = "sans serif"
 
 [theme.sidebar]
 backgroundColor = "#F9FAFB"
+
+[server]
+headless = true

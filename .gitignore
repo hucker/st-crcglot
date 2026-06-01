@@ -14,3 +14,6 @@ crcglot_stats.json
 
 # Streamlit secrets (Upstash credentials etc.).  NEVER commit.
 .streamlit/secrets.toml
+
+# Claude Code per-user settings (machine-local, do not commit).
+.claude/settings.local.json
