@@ -151,31 +151,175 @@ def _find_button_by_label(at: AppTest, label: str):
     return matches[0]
 
 
+def _rendered_text(at: AppTest) -> str:
+    """Concatenate everything renderable into one searchable string.
+
+    Used as a coarse "did the algorithm name / desc / warning text
+    end up on the page" check.  ``st.badge`` content isn't in the
+    AppTest accessors so the pill labels themselves aren't searchable
+    here -- but the algorithm desc (a ``st.caption``) is, which is
+    enough to confirm the result row was rendered.
+    """
+    return "\n".join(
+        [m.value for m in at.markdown if m.value]
+        + [c.value for c in at.caption if c.value]
+        + [w.value for w in at.warning if w.value]
+    )
+
+
 def test_reverse_target_mode_finds_crc32(at):
     """Drive Reverse Lookup in Target mode with payload 123456789 and
     target 0xCBF43926.  Should surface crc32 as a match."""
-    # Default CRC source is "Any" (Use Target sits last in the segmented
-    # control); flip to Target to expose the Target CRC text input.
     at.segmented_control(key="rev_source").set_value("Target").run()
-    # Drop in payload + target.  Default Input format is "Text".
     at.text_area(key="rev_text").set_value("123456789").run()
     at.text_input(key="rev_target").set_value("0xCBF43926").run()
-    # Click the (now-enabled) Reverse Lookup button.
     _find_button_by_label(at, "Reverse Lookup").click().run()
-    # The match algorithm name lands somewhere on the page -- as a
-    # st.badge label, an st.caption description, or in the View Result
-    # markdown header.  Scan everything renderable.
-    rendered = "\n".join(
-        [m.value for m in at.markdown if m.value]
-        + [c.value for c in at.caption if c.value]
-        + [getattr(b, "label", "") or "" for b in at.button]
+    assert "crc32" in _rendered_text(at), (
+        "Reverse Lookup Target mode should surface crc32 in the result"
     )
-    # st.badge values aren't in markdown/caption -- they sit in the
-    # rendered DOM under at.main's children.  Fall back to scanning the
-    # raw element JSON if the markdown didn't catch the name.
-    if "crc32" not in rendered:
-        rendered = at.main.repr_for_test()
-    assert "crc32" in rendered, (
-        "Reverse Lookup should mention the crc32 match somewhere on the "
-        f"page; truncated render: {rendered[:500]!r}"
+
+
+# ---------- Deeper coverage ----------
+
+
+def test_custom_calc_with_default_crc32_params_matches_check(at):
+    """End-to-end test of the Custom Calc dispatch:
+
+    - ``render_custom_picker`` builds an ``AlgorithmInfo`` from the form
+      fields,
+    - ``render_calculate_section`` routes it to ``generic_crc`` (custom
+      path, not ``encode_int``),
+    - the result panel renders the computed value as hex.
+
+    Custom Calc has no "Use test vector" checkbox (allow_verify=False),
+    so we manually feed ``"123456789"`` into the textarea.  The default
+    custom-form values are the crc32 parameters, so the result must
+    equal ``0xCBF43926``.  If the dispatch wrongly routed to the
+    catalog path -- which calls ``encode_int("custom", ...)`` and would
+    raise ValueError because "custom" isn't a registered name -- this
+    test would fail with an exception, not an assertion mismatch.
+    """
+    at.text_area(key="cust_calc_text").set_value("123456789").run()
+    at.button(key="cust_calc_go").click().run()
+    code_blocks = [c.value for c in at.code]
+    assert any("0xCBF43926" in code for code in code_blocks), (
+        f"Custom Calc with default crc32 params should produce 0xCBF43926; "
+        f"got code blocks {code_blocks!r}"
+    )
+
+
+def test_catalog_calc_with_raw_text_input(at):
+    """End-to-end with a *non*-test-vector input.  Verifies the input
+    text actually gets fed into ``encode_int`` rather than the calc
+    silently using the catalog's pre-published check value (which would
+    pass the test_vector test by accident regardless).
+
+    Uses ``"hello world"`` whose crc32 is ``0x0D4A1185`` -- not equal to
+    crc32's catalog check value, so a regression that returns
+    ``entry.check`` instead of computing from input would be caught.
+    """
+    # Leave test-vector checkbox off so the textarea is honoured.
+    at.text_area(key="cat_calc_text").set_value("hello world").run()
+    at.button(key="cat_calc_go").click().run()
+    code_blocks = [c.value for c in at.code]
+    assert any("0x0D4A1185" in code for code in code_blocks), (
+        f"crc32 of 'hello world' should be 0x0D4A1185; "
+        f"got code blocks {code_blocks!r}"
+    )
+
+
+def test_catalog_code_gen_produces_non_empty_c_output(at):
+    """Default Catalog Code Gen (crc32, C language, bitwise variant)
+    should yield ``.h`` and ``.c`` panes whose content contains the
+    user-typed symbol.  Regression target for the
+    ``generate_catalogue`` wrapper: if it ever dropped ``variant=`` or
+    ``symbol=`` on the way to crcglot, the output would change shape or
+    miss the symbol.
+    """
+    # The Catalog Code Gen symbol field defaults to "crc32" for the
+    # crc32 algorithm (default_symbol replaces '-' with '_').  Click
+    # Generate and verify both file panes appear with code in them.
+    at.button(key="cat_gen_go").click().run()
+    code_blocks = [c.value for c in at.code if c.value]
+    # Expect at least 2 code blocks for C (one .h, one .c).
+    assert len(code_blocks) >= 2, f"expected >= 2 code panes, got {len(code_blocks)}"
+    joined = "\n".join(code_blocks)
+    # The symbol "crc32" must appear in the generated source (function
+    # decl, table name, header guard, etc.) -- if our wrapper dropped
+    # the symbol argument, crcglot would fall back to a default and
+    # this assertion would fail.
+    assert "crc32" in joined, (
+        f"generated C code should reference the 'crc32' symbol; "
+        f"joined excerpt: {joined[:300]!r}"
+    )
+
+
+def test_reverse_no_match_shows_warning(at):
+    """When the input doesn't match any catalog algorithm under either
+    byte order, the View Result block should render an ``st.warning``
+    explaining common reasons.  Regression target for the no-match
+    branch in ``render_reverse_tab``.
+    """
+    at.segmented_control(key="rev_source").set_value("Target").run()
+    at.text_area(key="rev_text").set_value("not actually a packet").run()
+    # A target value no algorithm produces for the above payload
+    at.text_input(key="rev_target").set_value("0x12345678").run()
+    _find_button_by_label(at, "Reverse Lookup").click().run()
+    warnings = [w.value for w in at.warning if w.value]
+    assert warnings, "expected an st.warning rendered when no match found"
+    assert any("No catalog algorithm" in w for w in warnings), (
+        f"warning text should explain no-match; saw {warnings!r}"
+    )
+
+
+def test_reverse_text_end_of_data_mode_finds_crc32(at):
+    """The end-of-data text mode is a different dispatch path from the
+    Target mode test above -- it exercises ``detect()``'s framing
+    detection rather than the ``target_crc`` integer compare.  Both
+    paths should resolve the canonical crc32 case.
+    """
+    # rev_source defaults to "Any", rev_input_mode defaults to "Text"
+    at.text_area(key="rev_text").set_value("123456789 cbf43926").run()
+    _find_button_by_label(at, "Reverse Lookup").click().run()
+    assert "crc32" in _rendered_text(at), (
+        "end-of-data text-mode Reverse Lookup should surface crc32"
+    )
+
+
+def test_hex_input_parse_error_renders_error_message(at):
+    """When the Calc tab's Hex input mode receives malformed hex, the
+    error path should render an ``st.error``.  Regression target for
+    the input-validation wiring: a silent fallthrough to ``encode_int``
+    with an empty bytes object would compute *something* but display
+    the wrong CRC.
+    """
+    at.segmented_control(key="cat_calc_input_mode").set_value("Hex").run()
+    at.text_area(key="cat_calc_text").set_value("DE AD BX EF").run()
+    at.button(key="cat_calc_go").click().run()
+    errors = [e.value for e in at.error if e.value]
+    assert errors, "expected an st.error rendered for invalid hex input"
+    # The error message comes from parse_hex_bytes
+    assert any("Non-hex character" in e for e in errors), (
+        f"error should mention the bad character; saw {errors!r}"
+    )
+
+
+def test_target_crc_field_only_renders_in_target_mode(at):
+    """The ``Target CRC (hex)`` text input must only render when CRC
+    source is ``Target`` -- it's hidden in the end-of-data modes (Any /
+    8 / 16 / 32 / 64) where the CRC comes from the input itself.
+    Regression target for the conditional ``if not end_of_data:`` block.
+    """
+    # Default state: rev_source = "Any" -> Target field should NOT exist
+    keys_default = [t.key for t in at.text_input]
+    assert "rev_target" not in keys_default, (
+        f"rev_target text_input should be absent when CRC source is 'Any'; "
+        f"saw keys {keys_default!r}"
+    )
+    # Flip to Target -> field should appear on the rerun
+    at.segmented_control(key="rev_source").set_value("Target").run()
+    keys_target = [t.key for t in at.text_input]
+    assert "rev_target" in keys_target, (
+        f"rev_target text_input should appear when CRC source is 'Target'; "
+        f"saw keys {keys_target!r}"
     )
