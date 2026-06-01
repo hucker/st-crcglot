@@ -26,9 +26,8 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v6
         with:
-          # Pinning a uv version keeps CI deterministic across uv releases.
+          # Pinning the uv version keeps CI deterministic across uv releases.
           version: "0.9.4"
-          # Cache uv's download + venv directories so re-runs are fast.
           enable-cache: true
 
       - name: Install Python 3.14 (managed by uv)
@@ -37,14 +36,27 @@ jobs:
       - name: Install project + dev dependencies
         run: uv sync --all-extras --dev
 
-      - name: Lint (ruff check)
+      - name: ruff check (lint)
         run: uv run ruff check
 
-      - name: Format check (ruff format --check)
+      - name: ruff format --check
         run: uv run ruff format --check
 
-      - name: Type check (ty)
+      - name: ty check (typecheck)
         run: uv run ty check
 
-      - name: Run tests (pytest)
+      - name: pytest
         run: uv run pytest -ra
+
+      # The README badges are read from .badges/*.json on main, and a
+      # contributor is expected to regenerate them before pushing:
+      #
+      #   uv run python scripts/update_badges.py
+      #
+      # This step re-runs the same script in --check mode and fails the
+      # build if the committed badges don't match what the tools just
+      # reported.  That keeps the README's badge row honest: a green
+      # status on GitHub guarantees the .badges/ JSON on main reflects
+      # the latest tool output.
+      - name: Verify .badges/ in sync
+        run: uv run python scripts/update_badges.py --check

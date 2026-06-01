@@ -1,12 +1,26 @@
 # st-crcglot — CRC101
 
-[![CI](https://github.com/hucker/st-crcglot/actions/workflows/ci.yml/badge.svg)](https://github.com/hucker/st-crcglot/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.14+](https://img.shields.io/badge/python-3.14+-blue.svg)](https://www.python.org/downloads/)
+![ruff](.badges/ruff.svg)
+![ty](.badges/ty.svg)
+![pytest](.badges/pytest.svg)
 
 A Streamlit UI for [`crcglot`](https://github.com/hucker/crcglot): generate, calculate, and reverse-look-up CRCs against the full [reveng CRC catalogue](https://reveng.sourceforge.io/crc-catalogue/all.htm), with verified code emitters for eight target languages.
 
 **Live app:** <https://st-crcglot-f8g7hcvqvuj58axgeok3y7.streamlit.app/>
+
+![Reverse Lookup detecting crc32-cd-rom-edc from a captured text+CRC payload](docs/reverse_lookup.png)
+
+*Reverse Lookup: paste a payload + trailing CRC, get the matching algorithm along with the framing crcglot detected — separator, hex prefix, case, and byte order — as inline pills.*
+
+![Catalog Calc computing the CRC of a user-supplied string](docs/gen_crc.png)
+
+*Catalog Calc: pick an algorithm, type or paste your bytes (text or hex), get the CRC.*
+
+![Catalog Code Gen producing Python source for crc32](docs/gen_code.png)
+
+*Catalog Code Gen: pick algorithm + target language + implementation variant; get ready-to-compile, regression-tested source with download buttons per file.*
 
 ## What it does
 

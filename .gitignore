@@ -17,3 +17,7 @@ crcglot_stats.json
 
 # Claude Code per-user settings (machine-local, do not commit).
 .claude/settings.local.json
+
+# Local Claude project notes -- documents the build process / CI plumbing
+# for future Claude sessions on this repo.  Not for public consumption.
+CLAUDE.md
