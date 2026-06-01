@@ -20,7 +20,7 @@ cd st-crcglot
 uv run streamlit run streamlit_app.py
 ```
 
-The app opens at <http://localhost:8501> by default.
+Streamlit will print the local URL it's serving on (usually <http://localhost:8501>).  The production deploy lives at the **Live app** URL above.
 
 ## Architecture
 
