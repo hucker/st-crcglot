@@ -11,5 +11,26 @@
         "statusBar.debuggingForeground": "#EFFEEF",
         "statusBar.noFolderBackground": "#032F03",
         "statusBar.noFolderForeground": "#EFFEEF"
-    }
+    },
+    "cSpell.words": [
+        "acrocad",
+        "cand",
+        "Consolas",
+        "cust",
+        "DEADBEE",
+        "middot",
+        "modbus",
+        "refin",
+        "refout",
+        "renderable",
+        "reveng",
+        "Rocksoft",
+        "selectbox",
+        "Streamlit",
+        "subheaders",
+        "unconfigured",
+        "Verilog",
+        "VHDL",
+        "Xorout"
+    ]
 }
