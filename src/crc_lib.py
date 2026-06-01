@@ -73,7 +73,11 @@ __all__ = [
 # ---------- Module-level constants ----------
 
 REPO_URL = "https://github.com/hucker/st-crcglot"
-APP_ROOT = Path(__file__).resolve().parent
+# This module lives at src/crc_lib.py; APP_ROOT walks up to the repo
+# root so pyproject.toml (read by app_version), crcglot_stats.json
+# (stats fallback), and git rev-parse (run with cwd=APP_ROOT) all
+# resolve correctly.
+APP_ROOT = Path(__file__).resolve().parent.parent
 STATS_FILE = APP_ROOT / "crcglot_stats.json"
 CALC_KEY = "__calculate__"  # not a language code -- excluded from per-lang pills.
 REVERSE_KEY = "__reverse__"  # ditto -- reverse-lookup tab counter.

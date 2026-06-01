@@ -1,3 +1,9 @@
+<!-- markdownlint-disable MD024 -->
+<!-- MD024 = "Multiple headings with the same content".  Keep-a-Changelog
+     intentionally repeats `### Added` / `### Changed` / `### Removed` /
+     `### Fixed` headings under each version section, so disable that
+     rule for this file only. -->
+
 # Changelog
 
 All notable changes to this project are documented in this file.
@@ -7,26 +13,65 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-06-01
+
+The polish release.  No user-facing app behavior change; everything in
+this version is infrastructure that makes the project easier to read,
+contribute to, and trust.
+
 ### Added
 
-- `LICENSE` file (MIT) plus `license` and `authors` metadata in
-  `pyproject.toml` (PEP 639 SPDX form).
+- `LICENSE` (MIT) plus `license`, `license-files`, and `authors`
+  metadata in `pyproject.toml` (PEP 639 SPDX form).
 - GitHub Actions CI workflow at `.github/workflows/ci.yml` running
-  `ruff check`, `ruff format --check`, `ty check`, and `pytest` on
-  every push / PR against `main`.
-- This `CHANGELOG.md`.
-- README badges (CI status, license, Python version).
-- `ruff` and `ty` (Astral's type checker) added to the `dev`
+  `ruff check`, `ruff format --check`, `ty check`, `pytest`, and
+  `scripts/update_badges.py --check` on every push / PR against `main`.
+- `scripts/update_badges.py`: runs ruff / ty / pytest, counts errors,
+  rewrites the shields.io badge URLs in the README's
+  `<!-- BADGES:BEGIN -->...<!-- BADGES:END -->` block.  Has a
+  `--check` mode that fails CI if badges drift from current tool output.
+- README screenshots in `docs/`: `reverse_lookup.png`, `gen_crc.png`,
+  `gen_code.png`.
+- Error-count badges in the README: ruff / ty / pytest, each showing
+  `N errors` and going red on non-zero (driven by the update script).
+- `CHANGELOG.md` itself, following Keep-a-Changelog 1.1.0.
+- pytest test suite under `tests/` with `streamlit.testing.v1.AppTest`
+  smokes for the app and unit tests for the streamlit-free helpers.
+- `ruff`, `ty`, `pytest`, `pytest-cov` in the `[dependency-groups].dev`
   dependency group.
+- Test style documented in CLAUDE.md (gitignored local notes): AAA
+  section headers, `actual` / `expected` variable naming, assert
+  messages required on every assert, parametrize for data-driven cases.
 
 ### Changed
 
+- **Project layout: source moved to `src/`.**  `streamlit_app.py`,
+  `ui.py`, and `crc_lib.py` now live under `src/`; the repo root has
+  a small shim `streamlit_app.py` that does
+  `runpy.run_path("src/streamlit_app.py")` so Streamlit Cloud's
+  default "main file at repo root" expectation still works without
+  any dashboard reconfiguration.
+- `crc_lib.APP_ROOT` walks up from `src/` to the repo root so reads
+  of `pyproject.toml` (version), `crcglot_stats.json` (stats
+  fallback), and `git rev-parse` (commit SHA) all resolve from the
+  correct cwd.
+- pytest configured with `pythonpath = ["src"]` so tests can
+  `from crc_lib import ...` without installing the project as a
+  package.
 - Codebase normalized to `ruff format`'s output (whitespace / line
   breaks only; no behavior change).
 - Type-narrowing assertions added where the runtime already guarded
   but the static checker couldn't follow (`render_custom_picker`'s
   `parse_hex` results, `render_generate_section`'s `entry` in
   `is_custom` branch).
+- Tests rewritten to follow the documented Arrange / Act / Assert
+  style with assert messages on every assertion and
+  `actual`/`expected` variable naming throughout.
+
+### Removed
+
+- 14 abandoned/merged feature branches and 4 stale remote branches
+  cleaned up; only `main` and the in-flight release branch remain.
 
 ## [0.4.0] — 2026-05-31
 

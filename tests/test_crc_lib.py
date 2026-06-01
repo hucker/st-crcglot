@@ -19,6 +19,11 @@ What we do test:
   ``crc<W>*`` algorithm glob.
 - ``padding_pills`` formatting both ``TextFormat`` and ``HexFormat``
   into the pill-ready ``(label, help)`` tuples the renderer consumes.
+
+Style: every test is structured Arrange / Act / Assert (AAA), with
+section-header comments and a blank line between sections.  Tests
+whose arrangement is just inline literals (``_human_separator(" ")``)
+use a ``# Act + Assert`` header to avoid inventing a fake Arrange.
 """
 
 from __future__ import annotations
@@ -53,36 +58,100 @@ class TestParseHex:
         ],
     )
     def test_valid(self, raw, width, expected):
-        v, err = parse_hex(raw, "TestField", width)
-        assert err is None
-        assert v == expected
+        # Arrange: inputs come from the parametrize table above; the
+        # expected value is the third tuple element.
+
+        # Act
+        actual_value, actual_err = parse_hex(raw, "TestField", width)
+
+        # Assert: valid input parses cleanly with no error.
+        assert actual_err is None, f"valid input {raw!r} produced error {actual_err!r}"
+        assert actual_value == expected, (
+            f"parse_hex({raw!r}) = {actual_value!r}, expected {expected!r}"
+        )
 
     def test_empty_input(self):
-        v, err = parse_hex("", "Poly", 32)
-        assert v is None
-        assert err == "Poly is required."
+        # Arrange
+        raw = ""
+        expected_err = "Poly is required."
+
+        # Act
+        actual_value, actual_err = parse_hex(raw, "Poly", 32)
+
+        # Assert: empty input is reported as missing-required, not as malformed.
+        assert actual_value is None, (
+            f"empty input should not produce a value; got {actual_value!r}"
+        )
+        assert actual_err == expected_err, (
+            f"empty-input error = {actual_err!r}, expected {expected_err!r}"
+        )
 
     def test_not_hex(self):
-        v, err = parse_hex("not-a-hex", "Xorout", 32)
-        assert v is None
-        assert err is not None and "not a valid hex integer" in err
+        # Arrange
+        raw = "not-a-hex"
+        expected_err_fragment = "not a valid hex integer"
+
+        # Act
+        actual_value, actual_err = parse_hex(raw, "Xorout", 32)
+
+        # Assert: non-hex input produces a UI-friendly error fragment.
+        assert actual_value is None, (
+            f"non-hex input should not produce a value; got {actual_value!r}"
+        )
+        assert actual_err is not None, "non-hex input should produce an error"
+        assert expected_err_fragment in actual_err, (
+            f"error {actual_err!r} should contain {expected_err_fragment!r}"
+        )
 
     def test_overflow_caught(self):
-        # 33-bit value doesn't fit in width=32
-        v, err = parse_hex("0x1FFFFFFFF", "Poly", 32)
-        assert v is None
-        assert err is not None and "exceeds width" in err
+        # Arrange: a 33-bit value that doesn't fit in width=32.
+        raw = "0x1FFFFFFFF"
+        expected_err_fragment = "exceeds width"
+
+        # Act
+        actual_value, actual_err = parse_hex(raw, "Poly", 32)
+
+        # Assert: overflow returns None and an explanatory error.
+        assert actual_value is None, (
+            f"overflow should not produce a value; got {actual_value!r}"
+        )
+        assert actual_err is not None, "overflow should produce an error"
+        assert expected_err_fragment in actual_err, (
+            f"error {actual_err!r} should contain {expected_err_fragment!r}"
+        )
 
     def test_negative_caught(self):
-        v, err = parse_hex("-1", "Init", 16)
-        assert v is None
-        assert err is not None and "non-negative" in err
+        # Arrange
+        raw = "-1"
+        expected_err_fragment = "non-negative"
+
+        # Act
+        actual_value, actual_err = parse_hex(raw, "Init", 16)
+
+        # Assert: negative input is rejected with a clear message.
+        assert actual_value is None, (
+            f"negative input should not produce a value; got {actual_value!r}"
+        )
+        assert actual_err is not None, "negative input should produce an error"
+        assert expected_err_fragment in actual_err, (
+            f"error {actual_err!r} should contain {expected_err_fragment!r}"
+        )
 
     def test_exact_max_accepted(self):
-        # Boundary case: the mask itself fits
-        v, err = parse_hex("0xFFFFFFFF", "Poly", 32)
-        assert err is None
-        assert v == 0xFFFFFFFF
+        # Arrange: the boundary value -- the mask itself.
+        raw = "0xFFFFFFFF"
+        expected_value = 0xFFFFFFFF
+
+        # Act
+        actual_value, actual_err = parse_hex(raw, "Poly", 32)
+
+        # Assert: the boundary value fits within the width and parses cleanly.
+        assert actual_err is None, (
+            f"boundary value should parse cleanly; got error {actual_err!r}"
+        )
+        assert actual_value == expected_value, (
+            f"parse_hex({raw!r}) = {actual_value!r}, expected {expected_value!r}"
+        )
 
 
 # ---------- parse_hex_bytes (hex-dump to bytes) ----------
@@ -104,20 +173,46 @@ class TestParseHexBytes:
         ],
     )
     def test_decode(self, raw, expected):
-        assert parse_hex_bytes(raw) == expected
+        # Arrange: inputs come from the parametrize table above.
+
+        # Act
+        actual = parse_hex_bytes(raw)
+
+        # Assert: every separator variation decodes to the same bytes.
+        assert actual == expected, (
+            f"parse_hex_bytes({raw!r}) = {actual!r}, expected {expected!r}"
+        )
 
     def test_separator_only_input_is_empty(self):
-        # The Calc tab relies on this returning empty bytes (not erroring)
-        # so it can show its own "empty after stripping" error instead.
-        assert parse_hex_bytes("  \t \n  ") == b""
+        # Arrange: a string of only separators (whitespace).  The Calc
+        # tab relies on this returning empty bytes (not erroring) so it
+        # can show its own "empty after stripping" message instead.
+        raw = "  \t \n  "
+        expected = b""
+
+        # Act
+        actual = parse_hex_bytes(raw)
+
+        # Assert: separator-only inputs become empty bytes (not exceptions).
+        assert actual == expected, (
+            f"separator-only input should decode to {expected!r}; got {actual!r}"
+        )
 
     def test_non_hex_character_raises(self):
+        # Arrange: a hex-looking string with one non-hex char ('X').
+        raw = "DE AD BX EF"
+
+        # Act + Assert: the parser raises with a UI-friendly message.
         with pytest.raises(ValueError, match="Non-hex character"):
-            parse_hex_bytes("DE AD BX EF")
+            parse_hex_bytes(raw)
 
     def test_odd_nibbles_raises(self):
+        # Arrange: 7 nibbles -- odd number, can't form whole bytes.
+        raw = "DEADBEE"
+
+        # Act + Assert: the parser raises with an odd-nibble error.
         with pytest.raises(ValueError, match="odd number of nibbles"):
-            parse_hex_bytes("DEADBEE")
+            parse_hex_bytes(raw)
 
 
 # ---------- _human_separator ----------
@@ -126,26 +221,77 @@ class TestParseHexBytes:
 class TestHumanSeparator:
     """The pill label for the Sep field.  Owned entirely by us."""
 
-    def test_whitespace_named(self):
-        # Each whitespace character gets a keyboard-key word
-        assert _human_separator(" ") == "SPACE"
-        assert _human_separator("\t") == "TAB"
-        assert _human_separator("\n") == "NEWLINE"
-        assert _human_separator("\r\n") == "CRLF"
+    @pytest.mark.parametrize(
+        "raw,expected",
+        [
+            (" ", "SPACE"),
+            ("\t", "TAB"),
+            ("\n", "NEWLINE"),
+            ("\r\n", "CRLF"),
+        ],
+    )
+    def test_whitespace_named(self, raw, expected):
+        # Arrange: inputs come from the parametrize table above.
+
+        # Act
+        actual = _human_separator(raw)
+
+        # Assert: each whitespace character gets a keyboard-key word.
+        assert actual == expected, (
+            f"_human_separator({raw!r}) = {actual!r}, expected {expected!r}"
+        )
 
     def test_empty_is_none_marker(self):
-        # Reverse-lookup framing where the CRC butts directly against payload
-        assert _human_separator("") == "NONE"
+        # Arrange: reverse-lookup framing where the CRC butts directly
+        # against the payload; the empty separator must render as
+        # "NONE", not as an empty string.
+        raw = ""
+        expected = "NONE"
 
-    def test_repeated_whitespace_is_counted(self):
-        # "2 SPACES" / "3 TABS" rather than `  ` / `\t\t` in inline code
-        assert _human_separator("  ") == "2 SPACES"
-        assert _human_separator("\t\t\t") == "3 TABS"
+        # Act
+        actual = _human_separator(raw)
 
-    def test_punctuation_rendered_as_inline_code(self):
-        # Visible characters stay literal, wrapped in markdown backticks
-        assert _human_separator(":") == "`:`"
-        assert _human_separator(", ") == "`, `"
+        # Assert
+        assert actual == expected, (
+            f"_human_separator({raw!r}) = {actual!r}, expected {expected!r}"
+        )
+
+    @pytest.mark.parametrize(
+        "raw,expected",
+        [
+            ("  ", "2 SPACES"),
+            ("\t\t\t", "3 TABS"),
+        ],
+    )
+    def test_repeated_whitespace_is_counted(self, raw, expected):
+        # Arrange: inputs from the parametrize table.
+
+        # Act
+        actual = _human_separator(raw)
+
+        # Assert: "2 SPACES" / "3 TABS" rather than the raw chars.
+        assert actual == expected, (
+            f"_human_separator({raw!r}) = {actual!r}, expected {expected!r}"
+        )
+
+    @pytest.mark.parametrize(
+        "raw,expected",
+        [
+            (":", "`:`"),
+            (", ", "`, `"),
+        ],
+    )
+    def test_punctuation_rendered_as_inline_code(self, raw, expected):
+        # Arrange: inputs from the parametrize table.
+
+        # Act
+        actual = _human_separator(raw)
+
+        # Assert: visible characters stay literal, wrapped in markdown
+        # backticks for inline-code rendering on the pill.
+        assert actual == expected, (
+            f"_human_separator({raw!r}) = {actual!r}, expected {expected!r}"
+        )
 
 
 # ---------- padding_pills ----------
@@ -155,55 +301,96 @@ class TestPaddingPills:
     """Boundary translation from DetectMatch.padding to pill tuples."""
 
     def test_none_padding_returns_empty(self):
-        # Binary input and target_crc mode both produce padding=None;
-        # the renderer should get zero pills (not crash, not show 'Sep:
-        # NONE' as a fake label).
-        assert padding_pills(None) == []
+        # Arrange: binary input and target_crc mode both produce
+        # padding=None.  The renderer should get zero pills (not
+        # crash, not show "Sep: NONE" as a fake label).
+        padding = None
+        expected = []
+
+        # Act
+        actual = padding_pills(padding)
+
+        # Assert: empty list, not a placeholder pill.
+        assert actual == expected, (
+            f"padding_pills(None) should return {expected!r}; got {actual!r}"
+        )
 
     def test_text_format_three_pills_with_prefix(self):
-        # Sep + Prefix + Hex when the input has a "0x" prefix
+        # Arrange: drive crcglot to produce a real TextFormat with all
+        # three fields populated (separator + prefix + uppercase hex).
         hits = detect_chunk("123456789 0xCBF43926", mode="text")
         _, _, padding = hits[0]
-        labels = [label for label, _ in padding_pills(padding)]
-        assert labels == ["Sep: SPACE", "Prefix: 0x", "Hex: Upper"]
+        expected = ["Sep: SPACE", "Prefix: 0x", "Hex: Upper"]
+
+        # Act
+        actual = [label for label, _help in padding_pills(padding)]
+
+        # Assert: Sep + Prefix + Hex pills in fixed order.
+        assert actual == expected, (
+            f"text-format pills = {actual!r}, expected {expected!r}"
+        )
 
     def test_text_format_omits_prefix_pill_when_absent(self):
-        # No "0x" -> no Prefix pill (only Sep + Hex)
+        # Arrange: no "0x" -> no Prefix pill should appear.
         hits = detect_chunk("123456789 cbf43926", mode="text")
         _, _, padding = hits[0]
-        labels = [label for label, _ in padding_pills(padding)]
-        assert labels == ["Sep: SPACE", "Hex: Lower"]
+        expected = ["Sep: SPACE", "Hex: Lower"]
+
+        # Act
+        actual = [label for label, _help in padding_pills(padding)]
+
+        # Assert: only Sep + Hex, no Prefix pill when no prefix detected.
+        assert actual == expected, (
+            f"no-prefix pills = {actual!r}, expected {expected!r}"
+        )
 
     def test_hex_format_pills(self):
-        # Hex auto-decode mode uses HexFormat -- a different padding
-        # type with its own field names (byte_separator vs separator,
-        # prefix vs hex_prefix).  Our wrapper has to handle both.
+        # Arrange: hex auto-decode mode uses HexFormat -- a different
+        # padding type with its own field names (byte_separator vs
+        # separator, prefix vs hex_prefix).  Our wrapper has to handle
+        # both.  The per-byte 0x-prefixed input below produces a
+        # HexFormat with prefix_per_byte=True.
         hits = detect_chunk(
             "0x31,0x32,0x33,0x34,0x35,0x36,0x37,0x38,0x39,0xcb,0xf4,0x39,0x26",
             mode="hex",
         )
         assert hits, "expected a hex-mode crc32 match for the canonical input"
         _, _, padding = hits[0]
-        pills = padding_pills(padding)
-        labels = [label for label, _ in pills]
-        # Sep pill reflects the byte separator detected
-        assert any(lbl.startswith("Sep:") for lbl in labels)
-        # Prefix pill shows the "0x" prefix that was applied per-byte
-        prefix_pill = [lbl for lbl in labels if lbl.startswith("Prefix:")]
-        assert prefix_pill, f"expected a Prefix pill, got {labels}"
-        # The wrapper appends "(per byte)" when HexFormat.prefix_per_byte
-        # is True -- that distinguishes "0xDEADBEEF" (one prefix) from
-        # "0xDE 0xAD 0xBE 0xEF" (per-byte prefix).
-        assert "(per byte)" in prefix_pill[0]
+
+        # Act
+        actual_pills = padding_pills(padding)
+        actual_labels = [label for label, _help in actual_pills]
+        actual_prefix_labels = [
+            lbl for lbl in actual_labels if lbl.startswith("Prefix:")
+        ]
+
+        # Assert: HexFormat produces a Sep pill, a Prefix pill, and the
+        # Prefix label carries "(per byte)" because prefix_per_byte=True
+        # on this input (each byte was individually 0x-prefixed).
+        assert any(lbl.startswith("Sep:") for lbl in actual_labels), (
+            f"expected a Sep pill in {actual_labels!r}"
+        )
+        assert actual_prefix_labels, f"expected a Prefix pill in {actual_labels!r}"
+        assert "(per byte)" in actual_prefix_labels[0], (
+            f"Prefix pill should mark per-byte; got {actual_prefix_labels[0]!r}"
+        )
 
     def test_help_text_present_for_each_pill(self):
-        # Renderer expects (label, help) tuples; empty help would
-        # silently render a no-op tooltip.
+        # Arrange: drive crcglot to produce a real TextFormat.
         hits = detect_chunk("123456789 0xCBF43926", mode="text")
         _, _, padding = hits[0]
-        for label, help_md in padding_pills(padding):
-            assert label and help_md
-            assert isinstance(help_md, str)
+
+        # Act
+        actual_pills = padding_pills(padding)
+
+        # Assert: every pill is a non-empty (label, help) tuple of strs.
+        # An empty help string would silently render a no-op tooltip.
+        for label, help_md in actual_pills:
+            assert label, f"pill has empty label: {(label, help_md)!r}"
+            assert help_md, f"pill has empty help text: {(label, help_md)!r}"
+            assert isinstance(help_md, str), (
+                f"pill help should be str; got {type(help_md).__name__}"
+            )
 
 
 # ---------- detect_chunk ----------
@@ -219,25 +406,51 @@ class TestDetectChunkShape:
     """Return-shape and normalization invariants of detect_chunk."""
 
     def test_returns_three_tuples_of_correct_types(self):
-        hits = detect_chunk(b"123456789\xcb\xf4\x39\x26")
-        assert hits  # something matched
-        for item in hits:
-            assert isinstance(item, tuple) and len(item) == 3
-            info, endian, padding = item
-            # info comes through unchanged from crcglot
-            assert hasattr(info, "name") and hasattr(info, "width")
-            # endian is the title-cased string we add
-            assert endian in ("Big", "Little")
+        # Arrange: canonical crc32 trailing-bytes binary input.
+        chunk = b"123456789\xcb\xf4\x39\x26"
+
+        # Act
+        actual_hits = detect_chunk(chunk)
+
+        # Assert: at least one match, each is a 3-tuple of (info,
+        # endian-str, padding-or-None) with info exposing .name/.width.
+        assert actual_hits, f"expected a match for {chunk!r}; got nothing"
+        for item in actual_hits:
+            assert isinstance(item, tuple) and len(item) == 3, (
+                f"each match should be a 3-tuple; got {item!r}"
+            )
+            info, endian, _padding = item
+            assert hasattr(info, "name") and hasattr(info, "width"), (
+                f"info should expose name/width; got {info!r}"
+            )
+            assert endian in ("Big", "Little"), (
+                f"endian should be 'Big'/'Little'; got {endian!r}"
+            )
 
     def test_endian_string_is_title_cased(self):
-        # crcglot returns 'big'/'little' lower-case.  Our wrapper
+        # Arrange: BE-trailing and LE-trailing crc32 inputs.  crcglot
+        # itself returns 'big' / 'little' lower-case; our wrapper
         # title-cases them so the renderer can drop them straight into
         # "Endian: Big" pills without further string munging.
-        be = detect_chunk(b"123456789\xcb\xf4\x39\x26")
-        assert be[0][1] == "Big"
-        # LE-trailing crc32 -- byte-reversed CRC bytes
-        le = detect_chunk(b"123456789\x26\x39\xf4\xcb")
-        assert any(item[1] == "Little" for item in le)
+        be_chunk = b"123456789\xcb\xf4\x39\x26"
+        le_chunk = b"123456789\x26\x39\xf4\xcb"
+        expected_be_endian = "Big"
+        expected_le_endian = "Little"
+
+        # Act
+        actual_be_hits = detect_chunk(be_chunk)
+        actual_le_hits = detect_chunk(le_chunk)
+
+        # Assert: title-cased "Big" / "Little" strings, not crcglot's
+        # lower-case originals.
+        assert actual_be_hits[0][1] == expected_be_endian, (
+            f"BE chunk endian = {actual_be_hits[0][1]!r}, "
+            f"expected {expected_be_endian!r}"
+        )
+        assert any(item[1] == expected_le_endian for item in actual_le_hits), (
+            f"LE chunk should yield at least one '{expected_le_endian}' "
+            f"match; got {[item[1] for item in actual_le_hits]!r}"
+        )
 
 
 class TestDetectChunkModeInference:
@@ -246,19 +459,35 @@ class TestDetectChunkModeInference:
     for the Hex/Text toggle."""
 
     def test_bytes_input_defaults_to_binary_mode(self):
-        # Binary mode -> trailing bytes are the CRC; this only resolves
-        # if our wrapper actually inferred mode='binary'.  If it
-        # silently fell through to text mode, the test would fail.
-        hits = detect_chunk(b"123456789\xcb\xf4\x39\x26")
-        assert ("crc32", "Big") in [(i.name, e) for i, e, _ in hits]
+        # Arrange: bytes input -- trailing bytes are the CRC.  Resolves
+        # only if our wrapper actually inferred mode='binary'.
+        chunk = b"123456789\xcb\xf4\x39\x26"
+        expected_match = ("crc32", "Big")
+
+        # Act
+        actual_matches = [(i.name, e) for i, e, _ in detect_chunk(chunk)]
+
+        # Assert: bytes input must yield the binary-mode crc32 match.
+        assert expected_match in actual_matches, (
+            f"bytes input should yield {expected_match!r}; got {actual_matches!r}"
+        )
 
     def test_str_input_defaults_to_text_mode(self):
-        # Text mode -> last hex chars are the CRC; the asymmetry case
-        # "1234567890 0xC20A" is the litmus test for whether mode='auto'
-        # accidentally hex-decoded the string and found crc8 matches
-        # instead.  Default mode inference must pick 'text' for str.
-        hits = detect_chunk("1234567890 0xC20A", width=16)
-        assert {i.name for i, _, _ in hits} == {"crc16-modbus"}
+        # Arrange: the litmus case "1234567890 0xC20A".  This input
+        # parses as either text or hex; mode='auto' historically hex-
+        # decoded and found crc8 matches.  Default mode inference must
+        # pick 'text' for str inputs.
+        chunk = "1234567890 0xC20A"
+        expected_names = {"crc16-modbus"}
+
+        # Act
+        actual_names = {i.name for i, _, _ in detect_chunk(chunk, width=16)}
+
+        # Assert: text-mode inference yields the crc16-modbus match,
+        # not the crc8 shadows that hex-mode would surface.
+        assert actual_names == expected_names, (
+            f"str input width=16 should yield {expected_names!r}; got {actual_names!r}"
+        )
 
 
 class TestDetectChunkWidthGlob:
@@ -266,14 +495,26 @@ class TestDetectChunkWidthGlob:
     narrowing actually narrows."""
 
     def test_width_filter_drops_other_widths(self):
-        # crc32 of "123456789" with the well-known trailing bytes
+        # Arrange: crc32 of "123456789" with the well-known trailing bytes.
         chunk = b"123456789\xcb\xf4\x39\x26"
-        # width=32 matches
-        assert any(i.name == "crc32" for i, _, _ in detect_chunk(chunk, width=32))
-        # width=16 narrows it away
-        assert detect_chunk(chunk, width=16) == []
-        # width=None doesn't apply a filter
-        assert any(i.name == "crc32" for i, _, _ in detect_chunk(chunk, width=None))
+
+        # Act
+        actual_w32 = detect_chunk(chunk, width=32)
+        actual_w16 = detect_chunk(chunk, width=16)
+        actual_unfiltered = detect_chunk(chunk, width=None)
+
+        # Assert: width=32 keeps the match, width=16 narrows it away,
+        # width=None applies no filter and keeps the match.
+        assert any(i.name == "crc32" for i, _, _ in actual_w32), (
+            f"width=32 should yield crc32; got {[i.name for i, _, _ in actual_w32]!r}"
+        )
+        assert actual_w16 == [], (
+            f"width=16 should narrow away the crc32 match; got {actual_w16!r}"
+        )
+        assert any(i.name == "crc32" for i, _, _ in actual_unfiltered), (
+            f"width=None should keep crc32; "
+            f"got {[i.name for i, _, _ in actual_unfiltered]!r}"
+        )
 
 
 class TestDetectChunkTargetMode:
@@ -282,23 +523,52 @@ class TestDetectChunkTargetMode:
     the 0.9.1 BE/LE symmetry is exposed."""
 
     def test_be_target_matched_as_big(self):
-        hits = detect_chunk(b"123456789", target_crc=0xCBF43926)
-        assert [(i.name, e) for i, e, _ in hits] == [("crc32", "Big")]
+        # Arrange: crc32 BE target.
+        chunk = b"123456789"
+        target = 0xCBF43926
+        expected = [("crc32", "Big")]
+
+        # Act
+        actual = [(i.name, e) for i, e, _ in detect_chunk(chunk, target_crc=target)]
+
+        # Assert: BE target hits the crc32 algorithm with "Big" endian.
+        assert actual == expected, (
+            f"target_crc=0x{target:08X} should yield {expected!r}; got {actual!r}"
+        )
 
     def test_le_target_matched_as_little(self):
-        # crcglot 0.9.1's symmetry fix: 0x2639F4CB (the byte-reversed
-        # crc32 of 123456789) matches as endianness='little'.  If our
-        # wrapper drops target_crc on the floor this returns nothing.
-        hits = detect_chunk(b"123456789", target_crc=0x2639F4CB)
-        assert [(i.name, e) for i, e, _ in hits] == [("crc32", "Little")]
+        # Arrange: byte-reversed crc32 of "123456789".  crcglot 0.9.1's
+        # symmetry fix means this should still match crc32, flagged as
+        # endianness='little'.  If our wrapper drops target_crc on the
+        # floor, this returns nothing.
+        chunk = b"123456789"
+        target = 0x2639F4CB
+        expected = [("crc32", "Little")]
+
+        # Act
+        actual = [(i.name, e) for i, e, _ in detect_chunk(chunk, target_crc=target)]
+
+        # Assert: LE target also hits crc32, flagged "Little".
+        assert actual == expected, (
+            f"target_crc=0x{target:08X} should yield {expected!r}; got {actual!r}"
+        )
 
     def test_padding_is_none_in_target_mode(self):
-        # target_crc doesn't byte-parse, so padding is None -- means the
-        # renderer shouldn't try to show Sep/Prefix/Hex pills for
-        # Target-mode matches.
-        hits = detect_chunk(b"123456789", target_crc=0xCBF43926)
-        for _, _, padding in hits:
-            assert padding is None
+        # Arrange: target_crc mode doesn't byte-parse anything, so
+        # padding is None -- which means the renderer must not try to
+        # show Sep/Prefix/Hex pills for Target-mode matches.
+        chunk = b"123456789"
+        target = 0xCBF43926
+
+        # Act
+        actual_hits = detect_chunk(chunk, target_crc=target)
+
+        # Assert: every Target-mode match has padding=None.
+        for info, endian, padding in actual_hits:
+            assert padding is None, (
+                f"Target-mode match for {info.name}/{endian} "
+                f"should have padding=None; got {padding!r}"
+            )
 
 
 # ---------- available_variants ----------
@@ -309,19 +579,39 @@ class TestAvailableVariants:
     actual per-language per-width data is owned by crcglot."""
 
     def test_returns_list_not_tuple(self):
-        # crcglot returns a tuple; our wrapper widens to list so the
-        # renderer can use list methods on it.  If we forget the
-        # list() conversion, list-only operations (e.g. iteration with
-        # for-else, mutable accumulation) would break.
-        assert isinstance(available_variants("c", 32), list)
+        # Arrange: crcglot returns a tuple; our wrapper widens to list
+        # so the renderer can use list methods on it.
 
-    def test_slice8_only_at_width_32_and_64_for_c(self):
-        # The crcglot side of the contract -- documented in detect's
-        # docstring -- is that slice8 requires width 32 or 64.  We
-        # don't enforce this ourselves anymore (the magic check is
-        # deleted), so this test is really verifying we *don't* drop
-        # the rule on the way through.
-        assert "slice8" not in available_variants("c", 8)
-        assert "slice8" not in available_variants("c", 16)
-        assert "slice8" in available_variants("c", 32)
-        assert "slice8" in available_variants("c", 64)
+        # Act
+        actual = available_variants("c", 32)
+
+        # Assert: list (not tuple) is the contract the renderer relies on.
+        assert isinstance(actual, list), (
+            f"available_variants should return list; got {type(actual).__name__}"
+        )
+
+    @pytest.mark.parametrize(
+        "width,expected_slice8_present",
+        [
+            (8, False),
+            (16, False),
+            (32, True),
+            (64, True),
+        ],
+    )
+    def test_slice8_only_at_width_32_and_64_for_c(self, width, expected_slice8_present):
+        # Arrange: width from the parametrize table.  slice8 requires
+        # width 32 or 64 (crcglot's rule, documented in detect's
+        # docstring).  We don't enforce this ourselves -- the magic
+        # check was deleted -- so this verifies we *don't* drop the
+        # rule on the way through.
+
+        # Act
+        actual_variants = available_variants("c", width)
+        actual_has_slice8 = "slice8" in actual_variants
+
+        # Assert
+        assert actual_has_slice8 == expected_slice8_present, (
+            f"C width={width}: slice8 present={actual_has_slice8}, "
+            f"expected={expected_slice8_present}; full list {actual_variants!r}"
+        )

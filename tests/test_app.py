@@ -28,6 +28,11 @@ What we deliberately *don't* test here:
 - Code generation per language.  Each language is round-tripped by
   crcglot's own test suite; re-running it here would just slow the
   smoke pass without adding signal.
+
+Style: tests follow Arrange / Act / Assert with section-header
+comments and a blank line between sections.  The ``at`` fixture
+counts as the Arrange step for chrome-level checks (the freshly-run
+AppTest is the arranged-state), so those tests start at Act.
 """
 
 from __future__ import annotations
@@ -38,9 +43,9 @@ import pytest
 from streamlit.testing.v1 import AppTest
 
 
-# Locate streamlit_app.py relative to this test file so the suite works
-# regardless of the directory pytest is invoked from.
-APP = str(Path(__file__).resolve().parent.parent / "streamlit_app.py")
+# Locate src/streamlit_app.py relative to this test file so the suite
+# works regardless of the directory pytest is invoked from.
+APP = str(Path(__file__).resolve().parent.parent / "src" / "streamlit_app.py")
 
 
 @pytest.fixture
@@ -56,28 +61,43 @@ def at() -> AppTest:
 def test_app_boots_without_exception(at):
     """Page-level smoke: the script runs all the way through.  Any
     uncaught Python exception would land in ``at.exception``."""
+    # Arrange + Act: the `at` fixture is the freshly-run AppTest.
+
+    # Assert
     assert not at.exception, f"app raised: {at.exception}"
 
 
 def test_all_six_tabs_present(at):
     """The flat tab bar shows FAQ, Catalog Code Gen, Custom Code Gen,
     Catalog Calc, Custom Calc, Reverse Lookup."""
-    assert len(at.tabs) == 6
-    # Tab labels carry the emoji used in streamlit_app.py
-    labels = [tab.label for tab in at.tabs]
-    assert any("FAQ" in lbl for lbl in labels)
-    assert any("Catalog Code Gen" in lbl for lbl in labels)
-    assert any("Custom Code Gen" in lbl for lbl in labels)
-    assert any("Catalog Calc" in lbl for lbl in labels)
-    assert any("Custom Calc" in lbl for lbl in labels)
-    assert any("Reverse Lookup" in lbl for lbl in labels)
+    # Arrange + Act
+    actual_count = len(at.tabs)
+    expected_count = 6
+    actual_labels = [tab.label for tab in at.tabs]
+    expected_fragments = [
+        "FAQ",
+        "Catalog Code Gen",
+        "Custom Code Gen",
+        "Catalog Calc",
+        "Custom Calc",
+        "Reverse Lookup",
+    ]
+
+    # Assert: six tabs, each with the expected emoji + label fragment.
+    assert actual_count == expected_count, (
+        f"tab count = {actual_count}, expected {expected_count}; "
+        f"labels {actual_labels!r}"
+    )
+    for fragment in expected_fragments:
+        assert any(fragment in lbl for lbl in actual_labels), (
+            f"missing tab label fragment {fragment!r}; saw {actual_labels!r}"
+        )
 
 
 def test_expected_subheaders_render(at):
     """Each container-bound section uses st.subheader.  Across all tabs
     these are the visible section titles we expect."""
-    bodies = [s.body for s in at.subheader]
-    # Pickers + actions across the four Calc/Gen tabs + Reverse Lookup
+    # Arrange: the expected set of visible section titles across all tabs.
     expected_titles = {
         "Select Algorithm",
         "Select Parameters",
@@ -86,8 +106,13 @@ def test_expected_subheaders_render(at):
         "Calculate/Verify CRC",
         "Reverse Lookup",
     }
-    assert expected_titles <= set(bodies), (
-        f"missing subheaders: {expected_titles - set(bodies)}"
+
+    # Act
+    actual_titles = {s.body for s in at.subheader}
+
+    # Assert: every expected title appears as a subheader somewhere.
+    assert expected_titles <= actual_titles, (
+        f"missing subheaders: {expected_titles - actual_titles}"
     )
 
 
@@ -98,23 +123,35 @@ def test_faq_leads_with_acknowledgments_section(at):
     """The FAQ markdown should start with the credits block before any
     other section.  Regression target -- 'Standing on the shoulders of
     giants' should appear before 'What CRC101 does'."""
-    blocks = [m.value for m in at.markdown if m.value]
-    joined = "\n".join(blocks)
-    # Both headings present
-    assert "Standing on the shoulders of giants" in joined
-    assert "What CRC101 does" in joined
-    # And the credits block comes first
-    assert joined.index("Standing on the shoulders") < joined.index("What CRC101 does")
+    # Arrange + Act: gather every markdown block on the page into one
+    # searchable string.
+    actual_text = "\n".join(m.value for m in at.markdown if m.value)
+
+    # Assert: both headings present, with credits before "What CRC101 does".
+    assert "Standing on the shoulders of giants" in actual_text, (
+        "FAQ should contain 'Standing on the shoulders of giants' header"
+    )
+    assert "What CRC101 does" in actual_text, (
+        "FAQ should contain 'What CRC101 does' header"
+    )
+    assert actual_text.index("Standing on the shoulders") < actual_text.index(
+        "What CRC101 does"
+    ), "credits section should appear before 'What CRC101 does'"
 
 
 def test_faq_lists_all_three_acknowledgments(at):
     """Each ACKNOWLEDGMENTS entry should appear as a bullet (reveng /
     zlib / Rocksoft).  If crcglot adds or removes a credit upstream
     this test will flag it -- which is the point."""
-    joined = "\n".join(m.value for m in at.markdown if m.value)
-    assert "reveng CRC catalogue" in joined
-    assert "zlib" in joined
-    assert "Rocksoft" in joined
+    # Arrange + Act
+    actual_text = "\n".join(m.value for m in at.markdown if m.value)
+    expected_credits = ["reveng CRC catalogue", "zlib", "Rocksoft"]
+
+    # Assert: every published ACKNOWLEDGMENTS entry appears in the FAQ.
+    for credit in expected_credits:
+        assert credit in actual_text, (
+            f"FAQ should mention {credit!r}; not found in rendered markdown"
+        )
 
 
 # ---------- Catalog Calc gold path ----------
@@ -128,14 +165,19 @@ def test_catalog_calc_test_vector_produces_check_value(at):
     checkbox is on at click time; the default catalog algorithm is
     crc32.  We just need to flip the checkbox and click Calculate.
     """
-    # Widget keys in the source: "cat_calc_use_tv" (checkbox),
-    # "cat_calc_text" (textarea), "cat_calc_go" (button).
+    # Arrange: enable the test-vector checkbox so the textarea is
+    # populated with b"123456789".  Widget keys in source:
+    # "cat_calc_use_tv" (checkbox), "cat_calc_go" (button).
     at.checkbox(key="cat_calc_use_tv").set_value(True).run()
+    expected_crc = "0xCBF43926"
+
+    # Act: click Calculate.
     at.button(key="cat_calc_go").click().run()
-    # Result block writes the formatted CRC into st.code.
-    code_blocks = [c.value for c in at.code]
-    assert any("0xCBF43926" in code for code in code_blocks), (
-        f"expected the crc32 check value in code output; got {code_blocks!r}"
+
+    # Assert: the result block writes the formatted CRC into st.code.
+    actual_codes = [c.value for c in at.code]
+    assert any(expected_crc in code for code in actual_codes), (
+        f"expected {expected_crc} in code output; got {actual_codes!r}"
     )
 
 
@@ -175,12 +217,20 @@ def _rendered_text(at: AppTest) -> str:
 def test_reverse_target_mode_finds_crc32(at):
     """Drive Reverse Lookup in Target mode with payload 123456789 and
     target 0xCBF43926.  Should surface crc32 as a match."""
+    # Arrange: flip to Target mode, populate payload + target.
     at.segmented_control(key="rev_source").set_value("Target").run()
     at.text_area(key="rev_text").set_value("123456789").run()
     at.text_input(key="rev_target").set_value("0xCBF43926").run()
+    expected_alg = "crc32"
+
+    # Act: click the (now-enabled) Reverse Lookup button.
     _find_button_by_label(at, "Reverse Lookup").click().run()
-    assert "crc32" in _rendered_text(at), (
-        "Reverse Lookup Target mode should surface crc32 in the result"
+
+    # Assert: crc32 appears somewhere in the rendered text.
+    actual_text = _rendered_text(at)
+    assert expected_alg in actual_text, (
+        f"Target-mode Reverse Lookup should surface {expected_alg!r}; "
+        f"rendered text excerpt: {actual_text[:300]!r}"
     )
 
 
@@ -204,12 +254,19 @@ def test_custom_calc_with_default_crc32_params_matches_check(at):
     raise ValueError because "custom" isn't a registered name -- this
     test would fail with an exception, not an assertion mismatch.
     """
+    # Arrange: feed "123456789" into Custom Calc's textarea (custom
+    # params default to crc32, so this should match the catalog check).
     at.text_area(key="cust_calc_text").set_value("123456789").run()
+    expected_crc = "0xCBF43926"
+
+    # Act: click Calculate.
     at.button(key="cust_calc_go").click().run()
-    code_blocks = [c.value for c in at.code]
-    assert any("0xCBF43926" in code for code in code_blocks), (
-        f"Custom Calc with default crc32 params should produce 0xCBF43926; "
-        f"got code blocks {code_blocks!r}"
+
+    # Assert
+    actual_codes = [c.value for c in at.code]
+    assert any(expected_crc in code for code in actual_codes), (
+        f"Custom Calc with default crc32 params should produce {expected_crc}; "
+        f"got code blocks {actual_codes!r}"
     )
 
 
@@ -223,12 +280,20 @@ def test_catalog_calc_with_raw_text_input(at):
     crc32's catalog check value, so a regression that returns
     ``entry.check`` instead of computing from input would be caught.
     """
-    # Leave test-vector checkbox off so the textarea is honoured.
+    # Arrange: leave the test-vector checkbox off so the textarea is
+    # honored, then feed "hello world" into it.
     at.text_area(key="cat_calc_text").set_value("hello world").run()
+    expected_crc = "0x0D4A1185"  # crc32 of "hello world", not the catalog check
+
+    # Act
     at.button(key="cat_calc_go").click().run()
-    code_blocks = [c.value for c in at.code]
-    assert any("0x0D4A1185" in code for code in code_blocks), (
-        f"crc32 of 'hello world' should be 0x0D4A1185; got code blocks {code_blocks!r}"
+
+    # Assert: the input was actually fed into encode_int (not silently
+    # replaced with the catalog check value).
+    actual_codes = [c.value for c in at.code]
+    assert any(expected_crc in code for code in actual_codes), (
+        f"crc32 of 'hello world' should be {expected_crc}; "
+        f"got code blocks {actual_codes!r}"
     )
 
 
@@ -240,21 +305,26 @@ def test_catalog_code_gen_produces_non_empty_c_output(at):
     ``symbol=`` on the way to crcglot, the output would change shape or
     miss the symbol.
     """
-    # The Catalog Code Gen symbol field defaults to "crc32" for the
-    # crc32 algorithm (default_symbol replaces '-' with '_').  Click
-    # Generate and verify both file panes appear with code in them.
+    # Arrange: no widget setup needed -- the Catalog Code Gen defaults
+    # are crc32 + C + bitwise + symbol="crc32" (default_symbol replaces
+    # '-' with '_').
+    expected_min_panes = 2  # one .h, one .c
+    expected_symbol = "crc32"
+
+    # Act
     at.button(key="cat_gen_go").click().run()
-    code_blocks = [c.value for c in at.code if c.value]
-    # Expect at least 2 code blocks for C (one .h, one .c).
-    assert len(code_blocks) >= 2, f"expected >= 2 code panes, got {len(code_blocks)}"
-    joined = "\n".join(code_blocks)
-    # The symbol "crc32" must appear in the generated source (function
-    # decl, table name, header guard, etc.) -- if our wrapper dropped
-    # the symbol argument, crcglot would fall back to a default and
-    # this assertion would fail.
-    assert "crc32" in joined, (
-        f"generated C code should reference the 'crc32' symbol; "
-        f"joined excerpt: {joined[:300]!r}"
+
+    # Assert: both file panes appear with code referencing the symbol.
+    actual_codes = [c.value for c in at.code if c.value]
+    assert len(actual_codes) >= expected_min_panes, (
+        f"expected >= {expected_min_panes} code panes; got {len(actual_codes)}"
+    )
+    actual_joined = "\n".join(actual_codes)
+    # If our wrapper dropped the symbol argument, crcglot would fall
+    # back to a default and this assertion would fail.
+    assert expected_symbol in actual_joined, (
+        f"generated C code should reference the {expected_symbol!r} symbol; "
+        f"joined excerpt: {actual_joined[:300]!r}"
     )
 
 
@@ -264,15 +334,24 @@ def test_reverse_no_match_shows_warning(at):
     explaining common reasons.  Regression target for the no-match
     branch in ``render_reverse_tab``.
     """
+    # Arrange: Target mode with payload + target that no catalog
+    # algorithm produces.
     at.segmented_control(key="rev_source").set_value("Target").run()
     at.text_area(key="rev_text").set_value("not actually a packet").run()
-    # A target value no algorithm produces for the above payload
     at.text_input(key="rev_target").set_value("0x12345678").run()
+    expected_warning_fragment = "No catalog algorithm"
+
+    # Act
     _find_button_by_label(at, "Reverse Lookup").click().run()
-    warnings = [w.value for w in at.warning if w.value]
-    assert warnings, "expected an st.warning rendered when no match found"
-    assert any("No catalog algorithm" in w for w in warnings), (
-        f"warning text should explain no-match; saw {warnings!r}"
+
+    # Assert: an st.warning with the no-match explanation appears.
+    actual_warnings = [w.value for w in at.warning if w.value]
+    assert actual_warnings, (
+        "expected an st.warning rendered when no algorithm matched the input"
+    )
+    assert any(expected_warning_fragment in w for w in actual_warnings), (
+        f"warning text should contain {expected_warning_fragment!r}; "
+        f"got {actual_warnings!r}"
     )
 
 
@@ -282,11 +361,19 @@ def test_reverse_text_end_of_data_mode_finds_crc32(at):
     detection rather than the ``target_crc`` integer compare.  Both
     paths should resolve the canonical crc32 case.
     """
-    # rev_source defaults to "Any", rev_input_mode defaults to "Text"
+    # Arrange: defaults are rev_source="Any" and rev_input_mode="Text",
+    # so just populate the input area with payload + trailing hex CRC.
     at.text_area(key="rev_text").set_value("123456789 cbf43926").run()
+    expected_alg = "crc32"
+
+    # Act
     _find_button_by_label(at, "Reverse Lookup").click().run()
-    assert "crc32" in _rendered_text(at), (
-        "end-of-data text-mode Reverse Lookup should surface crc32"
+
+    # Assert: text-mode end-of-data should surface the crc32 match.
+    actual_text = _rendered_text(at)
+    assert expected_alg in actual_text, (
+        f"end-of-data text-mode Reverse Lookup should surface "
+        f"{expected_alg!r}; rendered excerpt: {actual_text[:300]!r}"
     )
 
 
@@ -297,14 +384,20 @@ def test_hex_input_parse_error_renders_error_message(at):
     with an empty bytes object would compute *something* but display
     the wrong CRC.
     """
+    # Arrange: switch Catalog Calc to Hex input mode, paste a string
+    # with one non-hex character.
     at.segmented_control(key="cat_calc_input_mode").set_value("Hex").run()
     at.text_area(key="cat_calc_text").set_value("DE AD BX EF").run()
+    expected_error_fragment = "Non-hex character"
+
+    # Act
     at.button(key="cat_calc_go").click().run()
-    errors = [e.value for e in at.error if e.value]
-    assert errors, "expected an st.error rendered for invalid hex input"
-    # The error message comes from parse_hex_bytes
-    assert any("Non-hex character" in e for e in errors), (
-        f"error should mention the bad character; saw {errors!r}"
+
+    # Assert: the parser error from parse_hex_bytes surfaces via st.error.
+    actual_errors = [e.value for e in at.error if e.value]
+    assert actual_errors, "expected an st.error rendered for invalid hex input"
+    assert any(expected_error_fragment in e for e in actual_errors), (
+        f"error should contain {expected_error_fragment!r}; saw {actual_errors!r}"
     )
 
 
@@ -314,16 +407,22 @@ def test_target_crc_field_only_renders_in_target_mode(at):
     8 / 16 / 32 / 64) where the CRC comes from the input itself.
     Regression target for the conditional ``if not end_of_data:`` block.
     """
-    # Default state: rev_source = "Any" -> Target field should NOT exist
-    keys_default = [t.key for t in at.text_input]
-    assert "rev_target" not in keys_default, (
-        f"rev_target text_input should be absent when CRC source is 'Any'; "
-        f"saw keys {keys_default!r}"
+    # Arrange + Act: default state has rev_source = "Any", so the
+    # Target CRC field should NOT exist yet.
+    actual_default_keys = [t.key for t in at.text_input]
+
+    # Assert (first half): rev_target absent in "Any" mode.
+    assert "rev_target" not in actual_default_keys, (
+        f"rev_target should be absent when CRC source is 'Any'; "
+        f"saw keys {actual_default_keys!r}"
     )
-    # Flip to Target -> field should appear on the rerun
+
+    # Act: flip to Target mode and re-run.
     at.segmented_control(key="rev_source").set_value("Target").run()
-    keys_target = [t.key for t in at.text_input]
-    assert "rev_target" in keys_target, (
-        f"rev_target text_input should appear when CRC source is 'Target'; "
-        f"saw keys {keys_target!r}"
+    actual_target_keys = [t.key for t in at.text_input]
+
+    # Assert (second half): rev_target appears in Target mode.
+    assert "rev_target" in actual_target_keys, (
+        f"rev_target should appear when CRC source is 'Target'; "
+        f"saw keys {actual_target_keys!r}"
     )
