@@ -193,6 +193,7 @@ def render_hero() -> None:
     &middot; powered by
     <a href="https://github.com/hucker/crcglot" target="_blank">crcglot</a>
     &middot; <a href="https://pypi.org/project/crcglot/" target="_blank">PyPI</a>
+    &middot; <a href="https://github.com/hucker/st-crcglot#readme" target="_blank">docs</a>
   </p>
 </div>
         """,
