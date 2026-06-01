@@ -1083,13 +1083,12 @@ def render_reverse_tab() -> None:
                 "Target CRC (hex)",
                 placeholder="0xcbf43926",
                 help=(
-                    "The CRC value you're trying to match.  Up to 64 bits.\n\n"
-                    "**Byte order:** this field takes the CRC as an "
-                    "integer value, not as on-the-wire bytes.  If your "
-                    "protocol serializes the CRC little-endian and you "
-                    "captured the raw bytes, byte-reverse them before "
-                    "typing -- e.g. wire `26 39 F4 CB` becomes "
-                    "`0xCBF43926` here."
+                    "The CRC value you're trying to match.  Up to 64 "
+                    "bits.  Both byte orderings are tried automatically: "
+                    "matches that hit on the byte-reversed reading of "
+                    "the value come back flagged with `Endian: Little` "
+                    "so you can see when the protocol's wire format is "
+                    "little-endian."
                 ),
                 key="rev_target",
             )
