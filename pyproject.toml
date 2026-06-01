@@ -9,3 +9,16 @@ dependencies = [
     "streamlit>=1.57.0",
     "upstash-redis>=1.4.0",
 ]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
+    "pytest-cov>=7.1.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# AppTest's first .run() compiles the script and warms streamlit caches,
+# which on a cold venv can take noticeably longer than the default 3s.
+# 30s is comfortable headroom on CI as well as a warm dev machine.
+addopts = "-ra --strict-markers"
