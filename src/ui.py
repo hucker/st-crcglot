@@ -253,6 +253,7 @@ def render_standard_picker(key_prefix: str) -> tuple[str, AlgorithmInfo, int]:
         f"| **Init** | `0x{entry.init:X}` | **Check** | `0x{entry.check:X}` |\n"
         f"| **Xorout** | `0x{entry.xorout:X}` | **Reflect** | "
         f"in=`{entry.refin}`, out=`{entry.refout}` |\n"
+        f"| **Source** | `{entry.source}` |  |  |\n"
     )
     if entry.desc:
         st.caption(f"_{entry.desc}_")
@@ -421,7 +422,6 @@ def render_custom_picker(
         assert check is not None
         assert xorout is not None
         entry = AlgorithmInfo(
-            name=desc or "custom",
             width=int(width),
             poly=poly,
             init=init,
@@ -430,6 +430,7 @@ def render_custom_picker(
             xorout=xorout,
             check=check,
             desc=desc,
+            source="custom",
         )
 
     return entry, int(width), custom_error
@@ -690,6 +691,7 @@ def render_generate_section(
 
 
 def render_calculate_section(
+    name: str | None,
     entry: AlgorithmInfo | None,
     custom_error: str | None,
     key_prefix: str,
@@ -712,6 +714,10 @@ def render_calculate_section(
     can then edit freely -- the button always reads from the visible field.
 
     Args:
+        name: Catalog algorithm name (e.g. ``"crc32"``) for catalog mode,
+            or ``None`` for custom mode (no registered name to dispatch
+            through; falls back to :func:`generic_crc` with the typed
+            parameters).  Also used as the label shown above the result.
         entry: :class:`AlgorithmInfo` to compute against.  ``None`` (or a
             non-None ``custom_error``) renders a helpful info banner
             instead of the controls.
@@ -823,8 +829,8 @@ def render_calculate_section(
     # Defer to crcglot: catalog algorithms compute via encode_int(name);
     # custom algorithms have no registered name so we hand crcglot the
     # raw parameter tuple from the user's typed AlgorithmInfo.
-    if entry.name in ALGORITHMS:
-        value = encode_int(data, entry.name)
+    if name is not None and name in ALGORITHMS:
+        value = encode_int(data, name)
     else:
         value = generic_crc(
             data,
@@ -839,10 +845,11 @@ def render_calculate_section(
     formatted = f"0x{value:0{nibbles}X}"
     bump_stats(CALC_KEY)
 
+    label = name or entry.desc or "custom"
     with st.container(border=True):
         st.subheader("View Result")
         st.markdown(
-            f"**\U0001f9ee Computed CRC**  ·  `{entry.name}`  ·  "
+            f"**\U0001f9ee Computed CRC**  ·  `{label}`  ·  "
             f"*{len(data):,} byte{'' if len(data) == 1 else 's'} input "
             f"· {entry.width}-bit*",
         )
@@ -999,16 +1006,18 @@ def render_calc_tab(picker_kind: str, key_prefix: str, allow_verify: bool) -> No
     with st.container(border=True):
         if picker_kind == "catalog":
             st.subheader("Select Algorithm")
-            _, entry, _ = render_standard_picker(key_prefix)
+            name, entry, _ = render_standard_picker(key_prefix)
             custom_error = None
         else:
             st.subheader("Select Parameters")
             entry, _, custom_error = render_custom_picker(key_prefix)
+            name = None
 
     with st.container(border=True):
         title = "Calculate/Verify CRC" if allow_verify else "Calculate CRC"
         st.subheader(title)
         render_calculate_section(
+            name=name,
             entry=entry,
             custom_error=custom_error,
             key_prefix=key_prefix,
@@ -1292,11 +1301,11 @@ def render_reverse_tab() -> None:
                 f"**\U0001f50d Found {len(matches)} match{plural}**  "
                 f"·  *{input_summary}*"
             )
-            for info, endian, padding in matches:
+            for name, info, endian, padding in matches:
                 # Row 1: the green algorithm-name badge (the "we found
                 # it" anchor for this match).
                 st.badge(
-                    info.name,
+                    name,
                     color="green",
                     icon=":material/check:",
                     help="The matched catalog algorithm name.",

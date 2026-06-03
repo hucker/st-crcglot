@@ -348,12 +348,12 @@ def detect_chunk(
     width: int | None = None,
     mode: DetectMode | None = None,
     target_crc: int | None = None,
-) -> list[tuple[AlgorithmInfo, str | None, object | None]]:
+) -> list[tuple[str, AlgorithmInfo, str | None, object | None]]:
     """Find catalog algorithms whose CRC sits at the end of a single chunk.
 
     Thin wrapper around :func:`crcglot.detect`.  We pass the chunk in
     single-packet form (no multi-packet intersection) and surface the
-    candidates in the ``(info, endian, padding)`` shape the renderer
+    candidates in the ``(name, info, endian, padding)`` shape the renderer
     consumes.  ``mode`` is forced rather than letting ``detect``'s
     ``mode="auto"`` guess -- auto-mode currently picks differently
     depending on whether an ``algorithms`` filter was passed, which made
@@ -379,10 +379,12 @@ def detect_chunk(
             ``None`` -- crcglot doesn't byte-parse a CRC in this path.
 
     Returns:
-        A list of ``(info, endian, padding)`` tuples.  ``endian`` is
-        ``"Big"`` or ``"Little"``.  ``padding`` is crcglot's
-        ``TextFormat`` / ``HexFormat`` describing how the boundary was
-        parsed, or ``None`` (binary input, or ``target_crc`` mode).
+        A list of ``(name, info, endian, padding)`` tuples.  ``name`` is
+        the catalog key (e.g. ``"crc32"``) since ``AlgorithmInfo`` no
+        longer carries it as a field.  ``endian`` is ``"Big"`` or
+        ``"Little"``.  ``padding`` is crcglot's ``TextFormat`` /
+        ``HexFormat`` describing how the boundary was parsed, or ``None``
+        (binary input, or ``target_crc`` mode).
     """
     glob = f"crc{width}*" if width else None
     if mode is None:
@@ -396,6 +398,7 @@ def detect_chunk(
     )
     return [
         (
+            cand.algorithm,
             cand.info,
             "Little" if cand.endianness == "little" else "Big",
             cand.padding,

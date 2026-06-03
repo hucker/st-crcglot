@@ -319,7 +319,7 @@ class TestPaddingPills:
         # Arrange: drive crcglot to produce a real TextFormat with all
         # three fields populated (separator + prefix + uppercase hex).
         hits = detect_chunk("123456789 0xCBF43926", mode="text")
-        _, _, padding = hits[0]
+        _, _, _, padding = hits[0]
         expected = ["Sep: SPACE", "Prefix: 0x", "Hex: Upper"]
 
         # Act
@@ -333,7 +333,7 @@ class TestPaddingPills:
     def test_text_format_omits_prefix_pill_when_absent(self):
         # Arrange: no "0x" -> no Prefix pill should appear.
         hits = detect_chunk("123456789 cbf43926", mode="text")
-        _, _, padding = hits[0]
+        _, _, _, padding = hits[0]
         expected = ["Sep: SPACE", "Hex: Lower"]
 
         # Act
@@ -355,7 +355,7 @@ class TestPaddingPills:
             mode="hex",
         )
         assert hits, "expected a hex-mode crc32 match for the canonical input"
-        _, _, padding = hits[0]
+        _, _, _, padding = hits[0]
 
         # Act
         actual_pills = padding_pills(padding)
@@ -378,7 +378,7 @@ class TestPaddingPills:
     def test_help_text_present_for_each_pill(self):
         # Arrange: drive crcglot to produce a real TextFormat.
         hits = detect_chunk("123456789 0xCBF43926", mode="text")
-        _, _, padding = hits[0]
+        _, _, _, padding = hits[0]
 
         # Act
         actual_pills = padding_pills(padding)
@@ -405,23 +405,28 @@ class TestPaddingPills:
 class TestDetectChunkShape:
     """Return-shape and normalization invariants of detect_chunk."""
 
-    def test_returns_three_tuples_of_correct_types(self):
+    def test_returns_four_tuples_of_correct_types(self):
         # Arrange: canonical crc32 trailing-bytes binary input.
         chunk = b"123456789\xcb\xf4\x39\x26"
 
         # Act
         actual_hits = detect_chunk(chunk)
 
-        # Assert: at least one match, each is a 3-tuple of (info,
-        # endian-str, padding-or-None) with info exposing .name/.width.
+        # Assert: at least one match, each is a 4-tuple of
+        # (name, info, endian-str, padding-or-None) -- crcglot 0.10+
+        # carries the catalog name on the DetectMatch (not on info),
+        # so detect_chunk surfaces it as the first element.
         assert actual_hits, f"expected a match for {chunk!r}; got nothing"
         for item in actual_hits:
-            assert isinstance(item, tuple) and len(item) == 3, (
-                f"each match should be a 3-tuple; got {item!r}"
+            assert isinstance(item, tuple) and len(item) == 4, (
+                f"each match should be a 4-tuple; got {item!r}"
             )
-            info, endian, _padding = item
-            assert hasattr(info, "name") and hasattr(info, "width"), (
-                f"info should expose name/width; got {info!r}"
+            name, info, endian, _padding = item
+            assert isinstance(name, str) and name, (
+                f"name should be a non-empty str; got {name!r}"
+            )
+            assert hasattr(info, "width") and hasattr(info, "source"), (
+                f"info should expose width/source; got {info!r}"
             )
             assert endian in ("Big", "Little"), (
                 f"endian should be 'Big'/'Little'; got {endian!r}"
@@ -442,14 +447,15 @@ class TestDetectChunkShape:
         actual_le_hits = detect_chunk(le_chunk)
 
         # Assert: title-cased "Big" / "Little" strings, not crcglot's
-        # lower-case originals.
-        assert actual_be_hits[0][1] == expected_be_endian, (
-            f"BE chunk endian = {actual_be_hits[0][1]!r}, "
+        # lower-case originals.  Endian is element [2] in the 4-tuple
+        # (name, info, endian, padding).
+        assert actual_be_hits[0][2] == expected_be_endian, (
+            f"BE chunk endian = {actual_be_hits[0][2]!r}, "
             f"expected {expected_be_endian!r}"
         )
-        assert any(item[1] == expected_le_endian for item in actual_le_hits), (
+        assert any(item[2] == expected_le_endian for item in actual_le_hits), (
             f"LE chunk should yield at least one '{expected_le_endian}' "
-            f"match; got {[item[1] for item in actual_le_hits]!r}"
+            f"match; got {[item[2] for item in actual_le_hits]!r}"
         )
 
 
@@ -465,7 +471,7 @@ class TestDetectChunkModeInference:
         expected_match = ("crc32", "Big")
 
         # Act
-        actual_matches = [(i.name, e) for i, e, _ in detect_chunk(chunk)]
+        actual_matches = [(n, e) for n, _i, e, _ in detect_chunk(chunk)]
 
         # Assert: bytes input must yield the binary-mode crc32 match.
         assert expected_match in actual_matches, (
@@ -481,7 +487,7 @@ class TestDetectChunkModeInference:
         expected_names = {"crc16-modbus"}
 
         # Act
-        actual_names = {i.name for i, _, _ in detect_chunk(chunk, width=16)}
+        actual_names = {n for n, _i, _e, _ in detect_chunk(chunk, width=16)}
 
         # Assert: text-mode inference yields the crc16-modbus match,
         # not the crc8 shadows that hex-mode would surface.
@@ -505,15 +511,15 @@ class TestDetectChunkWidthGlob:
 
         # Assert: width=32 keeps the match, width=16 narrows it away,
         # width=None applies no filter and keeps the match.
-        assert any(i.name == "crc32" for i, _, _ in actual_w32), (
-            f"width=32 should yield crc32; got {[i.name for i, _, _ in actual_w32]!r}"
+        assert any(n == "crc32" for n, _i, _e, _ in actual_w32), (
+            f"width=32 should yield crc32; got {[n for n, _i, _e, _ in actual_w32]!r}"
         )
         assert actual_w16 == [], (
             f"width=16 should narrow away the crc32 match; got {actual_w16!r}"
         )
-        assert any(i.name == "crc32" for i, _, _ in actual_unfiltered), (
+        assert any(n == "crc32" for n, _i, _e, _ in actual_unfiltered), (
             f"width=None should keep crc32; "
-            f"got {[i.name for i, _, _ in actual_unfiltered]!r}"
+            f"got {[n for n, _i, _e, _ in actual_unfiltered]!r}"
         )
 
 
@@ -529,7 +535,7 @@ class TestDetectChunkTargetMode:
         expected = [("crc32", "Big")]
 
         # Act
-        actual = [(i.name, e) for i, e, _ in detect_chunk(chunk, target_crc=target)]
+        actual = [(n, e) for n, _i, e, _ in detect_chunk(chunk, target_crc=target)]
 
         # Assert: BE target hits the crc32 algorithm with "Big" endian.
         assert actual == expected, (
@@ -546,7 +552,7 @@ class TestDetectChunkTargetMode:
         expected = [("crc32", "Little")]
 
         # Act
-        actual = [(i.name, e) for i, e, _ in detect_chunk(chunk, target_crc=target)]
+        actual = [(n, e) for n, _i, e, _ in detect_chunk(chunk, target_crc=target)]
 
         # Assert: LE target also hits crc32, flagged "Little".
         assert actual == expected, (
@@ -564,9 +570,9 @@ class TestDetectChunkTargetMode:
         actual_hits = detect_chunk(chunk, target_crc=target)
 
         # Assert: every Target-mode match has padding=None.
-        for info, endian, padding in actual_hits:
+        for name, _info, endian, padding in actual_hits:
             assert padding is None, (
-                f"Target-mode match for {info.name}/{endian} "
+                f"Target-mode match for {name}/{endian} "
                 f"should have padding=None; got {padding!r}"
             )
 
