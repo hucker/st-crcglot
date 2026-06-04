@@ -33,7 +33,9 @@ import pytest
 from crc_lib import (
     _human_separator,
     available_variants,
+    available_variants_bundle,
     detect_chunk,
+    generate_catalogue,
     padding_pills,
     parse_hex,
     parse_hex_bytes,
@@ -620,4 +622,176 @@ class TestAvailableVariants:
         assert actual_has_slice8 == expected_slice8_present, (
             f"C width={width}: slice8 present={actual_has_slice8}, "
             f"expected={expected_slice8_present}; full list {actual_variants!r}"
+        )
+
+
+# ---------- available_variants_bundle ----------
+#
+# Multi-algorithm bundles emit one variant across every algorithm, so
+# our wrapper has to filter to the intersection.  These tests pin the
+# intersection rule (not crcglot's per-width lists, which it owns).
+
+
+class TestAvailableVariantsBundle:
+    """Intersection-of-widths variant filtering for bundle mode."""
+
+    def test_bundle_drops_slice8_when_any_width_is_narrow(self):
+        # Arrange: mixing an 8-bit CRC with a 32-bit CRC.  slice8 is
+        # valid for 32 (alone) but invalid for 8, so the bundle picker
+        # must NOT offer slice8.
+        widths = [8, 32]
+        unexpected = "slice8"
+
+        # Act
+        actual_variants = available_variants_bundle("c", widths)
+
+        # Assert: slice8 dropped, bitwise + table still present.
+        assert unexpected not in actual_variants, (
+            f"bundle with widths {widths} should not offer {unexpected!r}; "
+            f"got {actual_variants!r}"
+        )
+        assert "bitwise" in actual_variants, (
+            f"bundle should always include bitwise; got {actual_variants!r}"
+        )
+
+    def test_bundle_keeps_slice8_when_all_widths_support_it(self):
+        # Arrange: 32 and 64 both support slice8, so the bundle does too.
+        widths = [32, 64]
+        expected = "slice8"
+
+        # Act
+        actual_variants = available_variants_bundle("c", widths)
+
+        # Assert: slice8 present in the intersection.
+        assert expected in actual_variants, (
+            f"bundle with widths {widths} should offer {expected!r}; "
+            f"got {actual_variants!r}"
+        )
+
+    def test_empty_widths_falls_back_to_full_default_list(self):
+        # Arrange: empty selection (renderer shouldn't reach the bundle
+        # picker in this state, but the helper must not crash on it).
+
+        # Act
+        actual_variants = available_variants_bundle("c", [])
+
+        # Assert: non-empty, contains bitwise at minimum.
+        assert actual_variants, "empty widths should still yield variants"
+        assert "bitwise" in actual_variants, (
+            f"empty-widths fallback should include bitwise; got {actual_variants!r}"
+        )
+
+    def test_single_width_matches_available_variants(self):
+        # Arrange: a one-width "bundle" should equal the single-algo
+        # variant list -- the intersection is trivial.
+        width = 32
+
+        # Act
+        actual_bundle = available_variants_bundle("c", [width])
+        actual_single = available_variants("c", width)
+
+        # Assert: identical lists in identical order (canonical order
+        # is preserved by both paths).
+        assert actual_bundle == actual_single, (
+            f"single-width bundle {actual_bundle!r} should equal "
+            f"available_variants({width}) {actual_single!r}"
+        )
+
+
+# ---------- generate_catalogue: multi-algorithm bundling ----------
+#
+# crcglot 0.12 added a per-language combiner that merges N single-algo
+# outputs into one file.  Our wrapper auto-routes through it when a
+# list is passed.
+
+
+class TestGenerateCatalogueBundle:
+    """Single-vs-list dispatch and per-language combiner shape."""
+
+    def test_single_name_returns_string_for_java(self):
+        # Arrange: Java single-algo wraps methods in a fixed `CrcGlot`
+        # container class (the `symbol=` parameter becomes the method
+        # name prefix, not the class name -- only the multi-algo
+        # combiner names the container from the file stem).
+        symbol = "MyCrc32"
+
+        # Act
+        actual = generate_catalogue("java", "crc32", "bitwise", symbol)
+
+        # Assert: string with the default container class plus methods
+        # named after the symbol prefix.
+        assert isinstance(actual, str), (
+            f"java single-algo should be str; got {type(actual).__name__}"
+        )
+        assert "public final class CrcGlot" in actual, (
+            f"java single-algo output should wrap in the default CrcGlot "
+            f"container class; first 300 chars: {actual[:300]!r}"
+        )
+        assert f"{symbol}_init" in actual and f"{symbol}_update" in actual, (
+            f"symbol={symbol!r} should become the method-name prefix "
+            f"(expected '{symbol}_init' / '{symbol}_update')"
+        )
+
+    def test_list_of_one_matches_single_name(self):
+        # Arrange: ["crc32"] and "crc32" should round-trip to the same
+        # bytes -- single-algo path bypasses the combiner entirely.
+
+        # Act
+        actual_single = generate_catalogue("java", "crc32", "bitwise", "Crc32")
+        actual_listed = generate_catalogue("java", ["crc32"], "bitwise", "Crc32")
+
+        # Assert: byte-for-byte identical.
+        assert actual_single == actual_listed, (
+            "single-name and single-element-list paths should produce "
+            "identical output (single-algo bypass of the combiner)"
+        )
+
+    def test_java_bundle_wraps_in_one_container_class(self):
+        # Arrange: two algos bundled into one Java file -- crcglot's
+        # combine_java wraps everything in a single public final class
+        # named from the stem, with both algorithms' helpers inside.
+        names = ["crc32", "crc16-modbus"]
+
+        # Act
+        actual = generate_catalogue("java", names, "bitwise", "MyCrcs")
+
+        # Assert: one container class, both algorithms' init methods
+        # present, classname matches the stem.
+        assert isinstance(actual, str), (
+            f"java bundle should be str; got {type(actual).__name__}"
+        )
+        assert "public final class MyCrcs" in actual, (
+            "java bundle should wrap algorithms in one container class "
+            "named from the stem"
+        )
+        assert "crc32_init" in actual and "crc16_modbus_init" in actual, (
+            f"bundle should keep both algorithms' catalogue-derived "
+            f"function names; got methods starting with: "
+            f"{[ln.strip() for ln in actual.split(chr(10)) if 'public static' in ln][:6]!r}"
+        )
+
+    def test_c_bundle_returns_header_source_tuple(self):
+        # Arrange: C generator emits (.h, .c).  Multi-algo combine_c
+        # preserves that shape -- one merged header, one merged source.
+        names = ["crc32", "crc16-modbus"]
+
+        # Act
+        actual = generate_catalogue("c", names, "bitwise", "mycrcs")
+
+        # Assert: 2-tuple of non-empty strings.
+        assert isinstance(actual, tuple) and len(actual) == 2, (
+            f"C bundle should be a 2-tuple; got {type(actual).__name__} len "
+            f"{len(actual) if isinstance(actual, tuple) else 'n/a'}"
+        )
+        header, source = actual
+        assert header and source, (
+            f"C bundle pieces should both be non-empty; got header={len(header)}, "
+            f"source={len(source)}"
+        )
+        # The merged source should #include the bundle stem header
+        # exactly once -- crcglot's combine_c rewrites the per-algo
+        # self-includes to point at the merged header.
+        assert source.count('#include "mycrcs.h"') == 1, (
+            f"merged C source should #include the bundle stem header "
+            f"exactly once; got {source.count('#include "mycrcs.h"')}"
         )

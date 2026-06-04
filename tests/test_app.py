@@ -328,6 +328,45 @@ def test_catalog_code_gen_produces_non_empty_c_output(at):
     )
 
 
+def test_catalog_code_gen_bundles_multiple_algorithms_into_one_java_file(at):
+    """Catalog Code Gen with multi-select + Java target should route
+    through crcglot's ``combine_java`` and emit a single ``.java`` file
+    that contains *both* algorithms' helpers inside one container class.
+
+    Regression target for the multi-algorithm path added in crcglot
+    0.12: if the wrapper accidentally fell back to single-algo
+    generation, only the first selected algorithm's functions would
+    appear in the output and `crc16_modbus_init` would be missing.
+    """
+    # Arrange: switch the catalog gen picker to a 2-algo bundle, pick
+    # Java, type a container/file stem, and click Generate.
+    at.multiselect(key="cat_gen_alg_multiselect").set_value(
+        ["crc32", "crc16-modbus"]
+    ).run()
+    at.segmented_control(key="cat_gen_lang").set_value("java").run()
+    at.text_input(key="cat_gen_symbol").set_value("MyCrcs").run()
+    expected_class = "public final class MyCrcs"
+    expected_methods = ("crc32_init", "crc16_modbus_init")
+
+    # Act
+    at.button(key="cat_gen_go").click().run()
+
+    # Assert: exactly one Java pane (single-file language) wrapping both
+    # algorithms' init helpers under the stem-named container class.
+    actual_codes = [c.value for c in at.code if c.value]
+    actual_joined = "\n".join(actual_codes)
+    assert expected_class in actual_joined, (
+        f"java bundle should wrap both algorithms in a class named from "
+        f"the file stem; first 400 chars: {actual_joined[:400]!r}"
+    )
+    for method in expected_methods:
+        assert method in actual_joined, (
+            f"java bundle should contain {method!r} (one per bundled "
+            f"algorithm); methods found: "
+            f"{[ln.strip() for ln in actual_joined.split(chr(10)) if 'public static' in ln][:8]!r}"
+        )
+
+
 def test_reverse_no_match_shows_warning(at):
     """When the input doesn't match any catalog algorithm under either
     byte order, the View Result block should render an ``st.warning``

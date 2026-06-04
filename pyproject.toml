@@ -8,7 +8,7 @@ license-files = ["LICENSE"]
 authors = [{ name = "Chuck Bass" }]
 requires-python = ">=3.14"
 dependencies = [
-    "crcglot>=0.11,<0.12",
+    "crcglot>=0.12,<0.13",
     "streamlit>=1.57.0",
     "upstash-redis>=1.4.0",
 ]

@@ -26,7 +26,7 @@ from crc_lib import (
     VARIANTS,
     alg_label,
     app_version,
-    available_variants,
+    available_variants_bundle,
     bump_stats,
     catalogue_names,
     crcglot_version,
@@ -58,20 +58,30 @@ def render_seo_meta() -> None:
     rewriting the served HTML would be the real fix.
     """
     n = len(ALGORITHMS)
+    # Language list reads live from crcglot so new targets (Java in 0.12,
+    # whatever ships in 0.13) appear in the meta tags without an SEO edit.
+    lang_names = [LANGUAGES[k].display_name for k in LANGUAGES]
+    if len(lang_names) > 1:
+        langs_csv = ", ".join(lang_names[:-1]) + ", and " + lang_names[-1]
+        langs_or = ", ".join(lang_names[:-1]) + ", or " + lang_names[-1]
+    else:
+        langs_csv = langs_or = lang_names[0]
+    keywords_langs = ", ".join(lang_names)
+    nlangs = len(lang_names)
     st.markdown(
         f"""
-<meta name="description" content="CRC101 -- generate and verify CRCs in your browser. Catalog of {n} algorithms, code emitters for C, Python, Rust, VHDL, C#, Go, and Zig, plus an interactive calculator.">
-<meta name="keywords" content="CRC, CRC-8, CRC-16, CRC-32, CRC-64, CRC calculator, CRC code generator, cyclic redundancy check, reveng catalogue, polynomial, crcglot, C, Python, Rust, VHDL, C#, Go, Zig">
+<meta name="description" content="CRC101 -- generate and verify CRCs in your browser. Catalog of {n} algorithms, code emitters for {langs_csv} ({nlangs} languages), plus an interactive calculator.">
+<meta name="keywords" content="CRC, CRC-8, CRC-16, CRC-32, CRC-64, CRC calculator, CRC code generator, cyclic redundancy check, reveng catalogue, polynomial, crcglot, {keywords_langs}">
 <meta name="author" content="Chuck Bass / acrocad.net">
 <meta name="robots" content="index, follow">
 
 <meta property="og:title" content="CRC101 -- CRC code generator & calculator">
-<meta property="og:description" content="Generate CRC code in C, Python, Rust, VHDL, C#, Go, or Zig from {n} catalog algorithms -- or calculate a CRC over your own bytes.">
+<meta property="og:description" content="Generate CRC code in {langs_or} from {n} catalog algorithms -- or calculate a CRC over your own bytes.">
 <meta property="og:type" content="website">
 
 <meta name="twitter:card" content="summary">
 <meta name="twitter:title" content="CRC101 -- CRC code generator & calculator">
-<meta name="twitter:description" content="Generate CRC code in C, Python, Rust, VHDL, C#, Go, or Zig from {n} catalog algorithms -- or calculate a CRC over your own bytes.">
+<meta name="twitter:description" content="Generate CRC code in {langs_or} from {n} catalog algorithms -- or calculate a CRC over your own bytes.">
         """,
         unsafe_allow_html=True,
     )
@@ -259,6 +269,91 @@ def render_standard_picker(key_prefix: str) -> tuple[str, AlgorithmInfo, int]:
         st.caption(f"_{entry.desc}_")
 
     return name, entry, entry.width
+
+
+def render_multi_standard_picker(
+    key_prefix: str,
+) -> tuple[list[str], AlgorithmInfo | None, list[int]]:
+    """Multi-select sibling of :func:`render_standard_picker`.
+
+    Used by Catalog Code Gen so the user can bundle several algorithms
+    into one generated file (crcglot 0.12+ feature -- the language's
+    ``combiner`` merges per-algorithm outputs without symbol collisions).
+    Calc tabs keep the single-select picker because you only calculate
+    one CRC at a time.
+
+    Returns ``(names, first_entry, widths)``:
+        - ``names``: algorithms in catalogue order (width then name).
+            Empty list when the user has cleared the multiselect; the
+            caller is responsible for disabling Generate in that case.
+        - ``first_entry``: :class:`AlgorithmInfo` of the first selected
+            algorithm, used by the test-vector pill (only shown when
+            exactly one is selected) and the parameter table (shown only
+            for single-algo to avoid wall-of-tables).  ``None`` when
+            the selection is empty.
+        - ``widths``: per-selected-algorithm widths, used by the variant
+            picker to filter to variants every algorithm supports.
+    """
+    state_key = f"{key_prefix}_last_catalogue_multi"
+    if state_key not in st.session_state:
+        st.session_state[state_key] = ["crc32"]
+
+    raw = st.multiselect(
+        f"CRC algorithm(s) ({len(catalogue_names)} available)",
+        catalogue_names,
+        default=[n for n in st.session_state[state_key] if n in catalogue_names]
+        or ["crc32"],
+        format_func=alg_label,
+        key=f"{key_prefix}_alg_multiselect",
+        help=(
+            f"{len(catalogue_names)} named algorithms from Greg Cook's "
+            "[reveng catalogue](https://reveng.sourceforge.io/crc-catalogue/all.htm).  "
+            "Pick one for a single source file, or several to have crcglot "
+            "bundle them into one combined output (each algorithm keeps its "
+            "catalogue-derived function names)."
+        ),
+    )
+    # Keep selection in catalogue order so generated bundles are stable
+    # under reorderings the multiselect might introduce.
+    names = [n for n in catalogue_names if n in set(raw)]
+    st.session_state[state_key] = names
+
+    if not names:
+        st.warning(
+            "Select at least one algorithm to generate code.",
+            icon=":material/warning:",
+        )
+        return [], None, []
+
+    first_entry = ALGORITHMS[names[0]]
+    widths = [ALGORITHMS[n].width for n in names]
+
+    # Single-algo: show the same parameter table the selectbox picker
+    # uses, since one algorithm fits cleanly.  Multi-algo: collapse to
+    # one summary row -- a wall of tables would dominate the viewport.
+    if len(names) == 1:
+        e = first_entry
+        st.markdown(
+            "|  |  |  |  |\n"
+            "|---|---|---|---|\n"
+            f"| **Width** | {e.width} bits | **Polynomial** | `0x{e.poly:X}` |\n"
+            f"| **Init** | `0x{e.init:X}` | **Check** | `0x{e.check:X}` |\n"
+            f"| **Xorout** | `0x{e.xorout:X}` | **Reflect** | "
+            f"in=`{e.refin}`, out=`{e.refout}` |\n"
+            f"| **Source** | `{e.source}` |  |  |\n"
+        )
+        if e.desc:
+            st.caption(f"_{e.desc}_")
+    else:
+        width_summary = ", ".join(f"{w}-bit" for w in widths)
+        st.caption(
+            f"Bundling **{len(names)}** algorithms ({width_summary}) into "
+            "one generated file.  Each algorithm keeps its catalogue-derived "
+            "function names; the **File basename** below becomes the file "
+            "stem (and, for Java, the container class name)."
+        )
+
+    return names, first_entry, widths
 
 
 def render_custom_picker(
@@ -542,35 +637,39 @@ def render_test_vector_display(
 
 
 def render_generate_section(
-    name: str,
+    names: list[str],
     entry: AlgorithmInfo | None,
-    width: int,
+    widths: list[int],
     custom_error: str | None,
     is_custom: bool,
     key_prefix: str,
 ) -> None:
     """Render the code-generation controls and (on click) the output panes.
 
-    Layout: target-language picker, implementation-variant picker (filtered
-    by what the language supports at that width), function/file-basename
-    text input, Generate button, then output panes per file extension when
-    the user clicks Generate.
+    Layout: target-language picker, implementation-variant picker
+    (filtered by what the language supports at every selected width),
+    file-basename text input, Generate button, then output panes per
+    file extension when the user clicks Generate.
 
     Bumps ``bump_stats(lang)`` once on successful generation -- one tick
-    per language used per click.  The output panes show the source code
-    with a Download button per file; for multi-file languages (e.g. C
-    emitting ``.h`` + ``.c``) the panes appear side-by-side.
+    per language used per click, independent of how many algorithms were
+    bundled.  The output panes show the source code with a Download
+    button per file; for multi-file languages (e.g. C emitting ``.h`` +
+    ``.c``) the panes appear side-by-side.
 
     Args:
-        name: Catalog algorithm name for catalog mode, or
-            :data:`SENTINEL_CUSTOM` for custom mode.  Used both for crcglot
-            dispatch and as the default function/file basename.
+        names: Catalog algorithm names for catalog mode (one or several
+            -- multi triggers crcglot's combiner), or ``[SENTINEL_CUSTOM]``
+            for custom mode.  Empty list disables Generate (the picker
+            renders a warning above this section).
         entry: :class:`AlgorithmInfo` for custom mode; ignored in catalog
-            mode (where crcglot looks ``name`` up internally).  ``None``
+            mode (where crcglot looks each name up internally).  ``None``
             triggers an error path if the user clicks Generate in custom
             mode.
-        width: CRC width in bits.  Used to filter which implementation
-            variants are offered (slice8 only at 32/64).
+        widths: Per-name widths in the same order as ``names``.  Used to
+            filter which implementation variants are offered (slice8
+            only at 32/64; bundling drops slice8 if any algorithm is
+            narrower).
         custom_error: First validation error from the custom form, or
             ``None``.  In custom mode the Generate button is disabled while
             this is non-None.
@@ -578,6 +677,11 @@ def render_generate_section(
             (True) or :func:`generate_catalogue` (False).
         key_prefix: Per-tab namespace for streamlit widget keys.
     """
+    if not names:
+        return
+    is_bundle = (not is_custom) and len(names) > 1
+    first_name = names[0]
+
     lang = (
         st.segmented_control(
             "Target language",
@@ -589,7 +693,7 @@ def render_generate_section(
         or "c"
     )
 
-    variants = available_variants(lang, int(width))
+    variants = available_variants_bundle(lang, [int(w) for w in widths])
 
     # Help text tracks the currently-selected variant.
     _prev_variant = st.session_state.get(f"{key_prefix}_variant_picker") or variants[0]
@@ -617,20 +721,37 @@ def render_generate_section(
     )
 
     sym_col, btn_col = st.columns([3, 1], vertical_alignment="bottom")
-    default_sym = "custom_crc" if is_custom else default_symbol(name)
+    if is_custom:
+        default_sym = "custom_crc"
+    elif is_bundle:
+        default_sym = "crcs"  # neutral bundle stem; user can override
+    else:
+        default_sym = default_symbol(first_name)
 
     sym_key = f"{key_prefix}_symbol"
     sym_for_key = f"{key_prefix}_symbol_for"
-    if st.session_state.get(sym_for_key) != name:
+    # Reseed the symbol field when the selection changes.  For a bundle
+    # use the tuple of names so adding/removing one algorithm re-triggers
+    # the seed (otherwise the old single-algo default would stick).
+    sym_for_value = tuple(names) if is_bundle else first_name
+    if st.session_state.get(sym_for_key) != sym_for_value:
         st.session_state[sym_key] = default_sym
-        st.session_state[sym_for_key] = name
+        st.session_state[sym_for_key] = sym_for_value
 
     with sym_col:
-        symbol = st.text_input(
-            "Function / file basename",
-            key=sym_key,
-            help="Used as the generated function name; for C, also the .c / .h basename.",
-        )
+        if is_bundle:
+            sym_label = "File basename"
+            sym_help = (
+                "File stem for the bundled output (and, in Java, the "
+                "container class name).  Each algorithm keeps its own "
+                "catalogue-derived function names inside the file."
+            )
+        else:
+            sym_label = "Function / file basename"
+            sym_help = (
+                "Used as the generated function name; for C, also the .c / .h basename."
+            )
+        symbol = st.text_input(sym_label, key=sym_key, help=sym_help)
     with btn_col:
         go = st.button(
             "Generate code",
@@ -654,12 +775,16 @@ def render_generate_section(
                     lang, symbol.strip(), entry, variant, symbol.strip()
                 )
             else:
-                result = generate_catalogue(lang, name, variant, symbol.strip())
+                # Catalog mode: pass the list -- generate_catalogue
+                # picks the single-algo path or routes through the
+                # language's combiner based on len(names).
+                result = generate_catalogue(lang, names, variant, symbol.strip())
         except ValueError as e:
             st.error(str(e))
             st.stop()
         if result is None:
-            st.error(f"Generator returned no output for {name!r}.")
+            label = first_name if not is_bundle else ", ".join(names)
+            st.error(f"Generator returned no output for {label!r}.")
             st.stop()
         bump_stats(lang)
 
@@ -913,14 +1038,21 @@ def render_faq_tab() -> None:
         )
     else:
         ack_block = ""
+    # Reads live from crcglot so new target languages appear in the FAQ
+    # without an edit here.
+    _lang_names = [LANGUAGES[k].display_name for k in LANGUAGES]
+    if len(_lang_names) > 1:
+        faq_langs = ", ".join(_lang_names[:-1]) + ", or " + _lang_names[-1]
+    else:
+        faq_langs = _lang_names[0]
     with st.container(border=True):
         st.markdown(
             f"""
 {ack_block}### What CRC101 does
 
-- **Generate CRC code** in C, C#, Go, Python, Rust, TypeScript,
-  Verilog, or VHDL — for any of {len(ALGORITHMS)} catalog algorithms or a custom
-  polynomial you define.
+- **Generate CRC code** in {faq_langs} — for any of
+  {len(ALGORITHMS)} catalog algorithms (one at a time, or several
+  bundled into one file) or a custom polynomial you define.
 - **Calculate a CRC** over your own bytes (text or hex), with
   optional verification against the canonical check value.
 - **Reverse-lookup** a captured CRC: paste the payload + its trailing
@@ -1047,21 +1179,39 @@ def render_gen_tab(picker_kind: str, key_prefix: str, is_custom: bool) -> None:
     """
     with st.container(border=True):
         if picker_kind == "catalog":
-            st.subheader("Select Algorithm")
-            name, entry, width = render_standard_picker(key_prefix)
+            # Catalog Code Gen uses the multi-select picker so the user
+            # can ask crcglot to bundle several algorithms into one
+            # generated file (0.12 feature).  Single-algo behavior is
+            # preserved: with one selection the picker shows the same
+            # parameter table the selectbox picker would have.
+            st.subheader("Select Algorithm(s)")
+            names, entry, widths = render_multi_standard_picker(key_prefix)
             custom_error = None
         else:
             st.subheader("Select Parameters")
             entry, width, custom_error = render_custom_picker(key_prefix)
-            name = SENTINEL_CUSTOM
-        render_test_vector_display(entry, is_custom=is_custom)
+            names = [SENTINEL_CUSTOM]
+            widths = [int(width)]
+        # Test vector pill makes sense for exactly one algorithm: catalog
+        # entries have a published check value; custom entries compute it
+        # live.  In multi-algo bundles every algorithm carries its own
+        # catalog check value -- showing one would mislead, listing them
+        # all would dominate the viewport, so we collapse to a caption.
+        if is_custom or len(names) == 1:
+            render_test_vector_display(entry, is_custom=is_custom)
+        else:
+            st.caption(
+                f"Bundling **{len(names)}** algorithms — each carries "
+                "its own catalogue **check** value and an embedded "
+                "`*_self_test()` that re-asserts it at runtime."
+            )
 
     with st.container(border=True):
         st.subheader("Generate code")
         render_generate_section(
-            name=name,
+            names=names,
             entry=entry,
-            width=width,
+            widths=widths,
             custom_error=custom_error,
             is_custom=is_custom,
             key_prefix=key_prefix,
