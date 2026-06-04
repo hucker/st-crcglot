@@ -13,6 +13,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Catalog picker's parameter table now shows the algorithm's **Source**
+  (the new `AlgorithmInfo.source` field added in crcglot 0.11.0) so users
+  can tell at a glance whether an entry came from the reveng catalogue
+  or from another spec.
+
+### Changed
+
+- `crc_lib.detect_chunk()` returns 4-tuples
+  `(name, info, endian, padding)` instead of 3-tuples
+  `(info, endian, padding)` — crcglot 0.10.0 dropped the catalog `name`
+  field from `AlgorithmInfo` (the catalogue is now `dict[str, AlgorithmInfo]`
+  with the key acting as the name), so we surface it as the first tuple
+  element instead.
+- `render_calculate_section` takes the algorithm name as an explicit
+  parameter (catalog mode: passes the catalog key; custom mode: passes
+  `None` and falls back to `generic_crc`).  Previously it discriminated
+  on `entry.name in ALGORITHMS`, which no longer exists.
+- Custom-side `AlgorithmInfo` is now constructed with `source="custom"`
+  (required field added in crcglot 0.11.0).
+
+### Dependencies
+
+- `crcglot` bumped to `>=0.11, <0.12` (from `>=0.9.1, <0.10`).  Brings
+  in the source-field provenance metadata and the new IETF-sourced
+  catalog entries.
+
 ## [0.5.0] — 2026-06-01
 
 The polish release.  No user-facing app behavior change; everything in
