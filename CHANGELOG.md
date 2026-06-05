@@ -15,13 +15,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Java** as a Code Gen target.  Auto-discovered from
+  `crcglot.LANGUAGES` — every catalog algorithm × every variant works
+  the same way as the other targets.  Single-algo output wraps in
+  `CrcGlot`; multi-algo bundles wrap in a container class named from
+  the file stem.
+- **Multi-algorithm Code Gen.**  The Catalog Code Gen picker is now an
+  `st.multiselect`: pick one algorithm (existing single-file behavior)
+  or several, and crcglot's per-language `combiner` merges them into
+  one output (one `.java` / `.py` / `.rs` / ... or one `.h` + `.c`
+  pair for C).  Each algorithm keeps its catalogue-derived function
+  names; the symbol field becomes the file stem in bundle mode.  The
+  variant picker filters to variants every selected width supports
+  (e.g. bundling a 16-bit CRC with a 32-bit CRC drops `slice8`).
 - Catalog picker's parameter table now shows the algorithm's **Source**
   (the new `AlgorithmInfo.source` field added in crcglot 0.11.0) so users
   can tell at a glance whether an entry came from the reveng catalogue
   or from another spec.
+- `crc_lib.available_variants_bundle(lang, widths)` helper — returns
+  the intersection of variants compatible with every width in a bundle.
+- 8 new unit tests for the multi-algo wrapper + 1 AppTest end-to-end
+  for the Java bundle path (71 total, up from 62).
 
 ### Changed
 
+- SEO `<meta>` tags and the FAQ language list now read live from
+  `crcglot.LANGUAGES` instead of hardcoding the 8-language enumeration.
+  Future crcglot targets appear without an SEO edit.
+- `crc_lib.generate_catalogue()` accepts either a single algorithm name
+  (`str`) or a list of names — single-algo path is byte-for-byte
+  unchanged; multi-algo path routes through `LanguageInfo.combiner`.
+- `render_generate_section` now takes `names: list[str]` /
+  `widths: list[int]` instead of singular `name` / `width`.  Symbol
+  field label switches to "File basename" in bundle mode (where each
+  algorithm keeps its catalogue-derived function names).
 - `crc_lib.detect_chunk()` returns 4-tuples
   `(name, info, endian, padding)` instead of 3-tuples
   `(info, endian, padding)` — crcglot 0.10.0 dropped the catalog `name`
@@ -37,9 +64,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Dependencies
 
-- `crcglot` bumped to `>=0.11, <0.12` (from `>=0.9.1, <0.10`).  Brings
-  in the source-field provenance metadata and the new IETF-sourced
-  catalog entries.
+- `crcglot` bumped to `>=0.12, <0.13` (from `>=0.9.1, <0.10`).  Brings
+  in the Java target, the multi-algorithm combiner, the source-field
+  provenance metadata, and the new IETF-sourced catalog entries.
 
 ## [0.5.0] — 2026-06-01
 

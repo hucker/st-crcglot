@@ -56,6 +56,7 @@ __all__ = [
     "detect_chunk",
     "padding_pills",
     "available_variants",
+    "available_variants_bundle",
     "generate_catalogue",
     "generate_custom",
     "default_symbol",
@@ -526,24 +527,71 @@ def available_variants(code: str, width: int) -> list[str]:
     return list(LANGUAGES[code].variants_for_width(width))
 
 
-def generate_catalogue(lang: str, name: str, variant: str, symbol: str):
-    """Generate code for a named catalog algorithm.
+def available_variants_bundle(code: str, widths: list[int]) -> list[str]:
+    """Variants compatible with EVERY width in a multi-algorithm bundle.
+
+    crcglot's combiner emits one variant across every bundled algorithm,
+    so the offered variants have to be the intersection of what each
+    algorithm's width supports (e.g. ``slice8`` only at 32/64 means
+    bundling a 16-bit CRC with a 32-bit one drops slice8 from the picker).
+
+    Args:
+        code: crcglot language code.
+        widths: Widths of the algorithms in the bundle, in any order.
+            Empty list returns the language's full default variant order.
+
+    Returns:
+        Variants in canonical order (bitwise, table, slice8), filtered to
+        those every width supports.  Always non-empty: bitwise works
+        everywhere, so worst-case the picker shows just bitwise.
+    """
+    info = LANGUAGES[code]
+    if not widths:
+        return list(info.variants)
+    result = list(info.variants_for_width(widths[0]))
+    for w in widths[1:]:
+        compat = set(info.variants_for_width(w))
+        result = [v for v in result if v in compat]
+    return result
+
+
+def generate_catalogue(lang: str, names: str | list[str], variant: str, symbol: str):
+    """Generate code for one or more named catalog algorithms.
+
+    Single-algorithm path is byte-for-byte identical to crcglot's
+    single-name generator.  Multi-algorithm path generates each name
+    separately, then feeds the per-algorithm outputs through
+    ``LanguageInfo.combiner`` which deduplicates includes/imports,
+    rewrites self-includes to point at the merged stem, and (for
+    container-style targets like Java) wraps every algorithm's helpers
+    in one class named after ``symbol``.
 
     Args:
         lang: crcglot language code.
-        name: Catalog algorithm name (e.g. ``"crc32"``).
-        variant: ``"bitwise"`` / ``"table"`` / ``"slice8"``.
-        symbol: Function / file basename to use in the generated code.
+        names: One catalog algorithm name (``str``) or several
+            (``list[str]``).  In multi-algorithm mode each algorithm
+            keeps its catalogue-derived function names; ``symbol`` is
+            the file stem only.
+        variant: ``"bitwise"`` / ``"table"`` / ``"slice8"``.  Same
+            variant applied to every algorithm in the bundle.
+        symbol: File basename (and, in single-algo mode, function name).
 
     Returns:
-        The generator's output -- a source string for single-file languages,
-        or a tuple of strings for multi-file languages (e.g. C's ``.h``/``.c``).
+        The generator's output -- a source string for single-file
+        languages, or a ``(header, source)`` tuple for multi-file
+        languages (C).  Multi-algorithm output has the same shape as
+        single-algorithm output for the same language.
     """
-    return LANGUAGES[lang].generator(
-        name,
-        symbol=symbol or None,
-        variant=variant,
-    )
+    info = LANGUAGES[lang]
+    name_list = [names] if isinstance(names, str) else list(names)
+    if len(name_list) == 1:
+        return info.generator(
+            name_list[0],
+            symbol=symbol or None,
+            variant=variant,
+        )
+    outputs = [info.generator(n, variant=variant) for n in name_list]
+    return info.combiner(outputs, stem=symbol or None)
 
 
 def generate_custom(
