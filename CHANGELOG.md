@@ -15,6 +15,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Comment style picker on both Code Gen tabs.**  Single-select,
+  language-aware: pick a documentation convention (Plain, Doxygen,
+  Javadoc, Google, NumPy, reST, rustdoc, godoc, jsdoc, docfx) and the
+  generated source carries the matching doc-block style.  Crcglot
+  rejects invalid combinations at the generator boundary (e.g.
+  Doxygen on Rust); the picker offers only the styles the current
+  language supports, so a user can't construct an invalid combination
+  via the UI.  Picker is always rendered — even when only `plain` applies
+  (Verilog / VHDL) — to avoid widget flicker on language change.  Stale
+  selections (e.g. Doxygen carried over from C to Rust) snap to the
+  first valid style for the new language.
 - **Java** as a Code Gen target.  Auto-discovered from
   `crcglot.LANGUAGES` — every catalog algorithm × every variant works
   the same way as the other targets.  Single-algo output wraps in
@@ -34,14 +45,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   or from another spec.
 - `crc_lib.available_variants_bundle(lang, widths)` helper — returns
   the intersection of variants compatible with every width in a bundle.
-- 8 new unit tests for the multi-algo wrapper + 1 AppTest end-to-end
-  for the Java bundle path (71 total, up from 62).
+- `crc_lib.style_label()` helper (mirrors `variant_label`) for the
+  Comment style picker's `format_func`.
+- 17 new tests for the comment-style work (16 unit + 1 AppTest e2e)
+  and 8 new for the prior multi-algo work; 88 total (up from 62).
 
 ### Changed
 
+- **Variant labels and descriptions now read live from
+  `crcglot.variant_info()`** instead of a locally-hardcoded `VARIANTS`
+  dict.  Our `crc_lib.VARIANTS: dict[str, tuple[str, str, str]]`
+  becomes `VARIANT_ICONS: dict[str, str]` (icons remain app-side
+  aesthetic).  Same observable behaviour; one less place a future
+  crcglot terminology change can diverge from the catalogue.
+- `crc_lib.crcglot_version()` reads `crcglot.__version__` directly
+  (added upstream in the same release as `variant_info` /
+  `LanguageInfo.styles`), falling back to `importlib.metadata.version`
+  if missing.  One fewer stdlib call in the common case.
 - SEO `<meta>` tags and the FAQ language list now read live from
   `crcglot.LANGUAGES` instead of hardcoding the 8-language enumeration.
   Future crcglot targets appear without an SEO edit.
+- `crc_lib.generate_catalogue()` and `generate_custom()` accept a new
+  `comment_style="plain"` kwarg.  Default preserves byte-for-byte
+  output of pre-0.13 callers; explicit `"plain"` and an omitted kwarg
+  are byte-identical.  Multi-algo bundles apply the same style to
+  every algorithm.
 - `crc_lib.generate_catalogue()` accepts either a single algorithm name
   (`str`) or a list of names — single-algo path is byte-for-byte
   unchanged; multi-algo path routes through `LanguageInfo.combiner`.
@@ -64,9 +92,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Dependencies
 
-- `crcglot` bumped to `>=0.12, <0.13` (from `>=0.9.1, <0.10`).  Brings
-  in the Java target, the multi-algorithm combiner, the source-field
-  provenance metadata, and the new IETF-sourced catalog entries.
+- `crcglot` bumped to `>=0.14, <0.15` (from `>=0.9.1, <0.10`).  The
+  0.14.0 release ships the four ergonomic helpers this PR depends on
+  (`__version__`, `variant_info`, `LanguageInfo.styles`,
+  `LanguageInfo.variant_infos_for_width`) plus the pluggable
+  comment-style API.  No `[tool.uv.sources]` git pin -- straight
+  PyPI constraint.
 
 ## [0.5.0] — 2026-06-01
 

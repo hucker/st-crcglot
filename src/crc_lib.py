@@ -25,7 +25,9 @@ from crcglot import (
     detect,
     encode_int,
     generic_crc,
+    variant_info,
 )
+from crcglot.comments import style_info
 
 # Optional / newer symbol -- isolated so a missing or stale crcglot can't
 # crash the whole app at import time.  Empty tuple = FAQ credits section
@@ -47,7 +49,7 @@ __all__ = [
     "CALC_KEY",
     "REVERSE_KEY",
     "SENTINEL_CUSTOM",
-    "VARIANTS",
+    "VARIANT_ICONS",
     "catalogue_names",
     "encode_int",
     "generic_crc",
@@ -55,6 +57,8 @@ __all__ = [
     "parse_hex_bytes",
     "detect_chunk",
     "padding_pills",
+    "variant_info",
+    "style_info",
     "available_variants",
     "available_variants_bundle",
     "generate_catalogue",
@@ -63,6 +67,7 @@ __all__ = [
     "alg_label",
     "lang_label",
     "variant_label",
+    "style_label",
     "load_stats",
     "bump_stats",
     "app_version",
@@ -84,14 +89,13 @@ CALC_KEY = "__calculate__"  # not a language code -- excluded from per-lang pill
 REVERSE_KEY = "__reverse__"  # ditto -- reverse-lookup tab counter.
 SENTINEL_CUSTOM = "__custom__"  # passed as `name` when generating from custom params.
 
-VARIANTS: dict[str, tuple[str, str, str]] = {
-    "bitwise": ("◯", "Bit-by-bit", "Smallest; portable; one byte per 8 shifts."),
-    "table": ("▦", "Table-driven", "256-entry LUT; ~2-4x faster than bit-by-bit."),
-    "slice8": (
-        "▩",
-        "Slice-by-8",
-        "8 LUTs; another ~2-4x faster (32/64-bit CRCs only).",
-    ),
+# Icons are app-side aesthetic, not part of crcglot's variant model;
+# labels and descriptions read live from `crcglot.variant_info()` so they
+# stay in sync with the library and the CLI.
+VARIANT_ICONS: dict[str, str] = {
+    "bitwise": "◯",
+    "table": "▦",
+    "slice8": "▩",
 }
 
 # Width ascending, then name ascending: groups crc8 -> 16 -> 32 -> 64 in the picker.
@@ -127,16 +131,23 @@ def app_version() -> str:
 def crcglot_version() -> str:
     """Read the installed crcglot package version.
 
+    Reads :data:`crcglot.__version__` directly (added upstream alongside
+    the variant_info / styles helpers).  Falls back to package metadata
+    if the running crcglot somehow lacks the attribute -- shouldn't
+    happen in practice given our ``>=0.14`` pin, but keeps the footer
+    safe under mixed dev environments.
+
     Cached for the process lifetime.
 
     Returns:
-        The PEP 440 version string from package metadata, or ``"unknown"``
-        if crcglot isn't installed (shouldn't happen in practice -- it's a
-        hard dependency).
+        The PEP 440 version string, or ``"unknown"`` if crcglot isn't
+        importable / installed (shouldn't happen -- it's a hard dep).
     """
     try:
-        return pkg_version("crcglot")
-    except PackageNotFoundError:
+        import crcglot
+
+        return getattr(crcglot, "__version__", None) or pkg_version("crcglot")
+    except ImportError, PackageNotFoundError:
         return "unknown"
 
 
@@ -555,7 +566,13 @@ def available_variants_bundle(code: str, widths: list[int]) -> list[str]:
     return result
 
 
-def generate_catalogue(lang: str, names: str | list[str], variant: str, symbol: str):
+def generate_catalogue(
+    lang: str,
+    names: str | list[str],
+    variant: str,
+    symbol: str,
+    comment_style: str = "plain",
+):
     """Generate code for one or more named catalog algorithms.
 
     Single-algorithm path is byte-for-byte identical to crcglot's
@@ -575,6 +592,14 @@ def generate_catalogue(lang: str, names: str | list[str], variant: str, symbol: 
         variant: ``"bitwise"`` / ``"table"`` / ``"slice8"``.  Same
             variant applied to every algorithm in the bundle.
         symbol: File basename (and, in single-algo mode, function name).
+        comment_style: Documentation comment style.  ``"plain"`` (default)
+            preserves byte-for-byte the output crcglot emitted before
+            the comment-style feature landed.  See
+            :func:`crcglot.comments.styles_for_language` for the codes
+            valid for ``lang``.  In bundle mode the same style is applied
+            to every algorithm; crcglot's combiner does not take a
+            ``comment_style`` kwarg because the style is baked into
+            each per-algorithm output upstream.
 
     Returns:
         The generator's output -- a source string for single-file
@@ -589,13 +614,22 @@ def generate_catalogue(lang: str, names: str | list[str], variant: str, symbol: 
             name_list[0],
             symbol=symbol or None,
             variant=variant,
+            comment_style=comment_style,
         )
-    outputs = [info.generator(n, variant=variant) for n in name_list]
+    outputs = [
+        info.generator(n, variant=variant, comment_style=comment_style)
+        for n in name_list
+    ]
     return info.combiner(outputs, stem=symbol or None)
 
 
 def generate_custom(
-    lang: str, name: str, entry: AlgorithmInfo, variant: str, symbol: str
+    lang: str,
+    name: str,
+    entry: AlgorithmInfo,
+    variant: str,
+    symbol: str,
+    comment_style: str = "plain",
 ):
     """Generate code from a custom :class:`AlgorithmInfo` instead of a name.
 
@@ -607,6 +641,9 @@ def generate_custom(
             parameters.
         variant: ``"bitwise"`` / ``"table"`` / ``"slice8"``.
         symbol: Function / file basename to use in the generated code.
+        comment_style: Documentation comment style; ``"plain"`` by
+            default preserves byte-for-byte the pre-styling crcglot
+            output.
 
     Returns:
         The generator's output -- shape mirrors :func:`generate_catalogue`.
@@ -616,6 +653,7 @@ def generate_custom(
         entry,
         symbol=symbol or None,
         variant=variant,
+        comment_style=comment_style,
     )
 
 
@@ -668,7 +706,23 @@ def variant_label(v: str) -> str:
         v: Variant key (``"bitwise"`` / ``"table"`` / ``"slice8"``).
 
     Returns:
-        e.g. ``"◯  Bit-by-bit"`` or ``"▦  Table-driven"``.
+        e.g. ``"◯  Bit-by-bit"`` or ``"▦  Table-driven"`` -- icon from
+        the local :data:`VARIANT_ICONS` map, label from
+        :func:`crcglot.variant_info`.
     """
-    icon, name, _ = VARIANTS[v]
-    return f"{icon}  {name}"
+    return f"{VARIANT_ICONS[v]}  {variant_info(v).label}"
+
+
+def style_label(s: str) -> str:
+    """Format a comment-style code for the picker.
+
+    Args:
+        s: Style code (e.g. ``"plain"``, ``"doxygen"``, ``"javadoc"``).
+
+    Returns:
+        The human label from :func:`crcglot.comments.style_info`
+        (e.g. ``"Doxygen"``, ``"JavaDoc"``).  No icon prefix -- styles
+        are documentation conventions, not implementation choices, so
+        a glyph would carry no semantic meaning.
+    """
+    return style_info(s).label

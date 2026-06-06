@@ -174,17 +174,17 @@ wheels = [
 
 [[package]]
 name = "crcglot"
-version = "0.12.0"
+version = "0.14.0"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/ea/ba/a63662fc091fabc27c6623787d310748859f424a47f1fb99326542c75809/crcglot-0.12.0.tar.gz", hash = "sha256:009242b7384c7ea30e78fc823f0be7fff6fb75c4421a2b26464cd50d6e5c06b4", size = 184490, upload-time = "2026-06-04T17:13:12.123Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/96/64/e2536a9f88a5e8b28583ae86ea0bcb85bdb9e048b60432293eafac4fe836/crcglot-0.14.0.tar.gz", hash = "sha256:defcd690c3cea987841912be16ca7299a2a40099f3f47494ec81dc70c624c146", size = 209519, upload-time = "2026-06-05T21:52:32.279Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/1d/e0/06251d784150e05e5f2daecfae40c06d44bcc0cc850a2cdd5416c80f8616/crcglot-0.12.0-cp311-abi3-macosx_11_0_arm64.whl", hash = "sha256:ba9e6d6ba99b9ed3d59269ae58b09f6e6e0292d9fa553d64f76a2c5282de5984", size = 123315, upload-time = "2026-06-04T17:13:03.608Z" },
-    { url = "https://files.pythonhosted.org/packages/2a/0f/49258a4de3e120416be3d7d0b2b64392a5e0f97ffa7c90caf3a08ccf8177/crcglot-0.12.0-cp311-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:560d1fa67412dab61a8b5ada9257d5d298514e04de1e3a6de1cb80ea9d7fca2a", size = 142109, upload-time = "2026-06-04T17:13:04.849Z" },
-    { url = "https://files.pythonhosted.org/packages/bc/de/9df8963702c65250a5739d8cb07d8cef445b4139efdc3e44cd2d472b4c63/crcglot-0.12.0-cp311-abi3-manylinux_2_5_x86_64.manylinux1_x86_64.manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:263a04624c28b46efcfd58cce8c9d99ba02851d208eb59b988798b675e53c5bf", size = 142407, upload-time = "2026-06-04T17:13:06.118Z" },
-    { url = "https://files.pythonhosted.org/packages/24/c6/4bb49d906fdb1953413a4a5f97848f48aeef13c5c6f0877fc116e6079164/crcglot-0.12.0-cp311-abi3-musllinux_1_2_aarch64.whl", hash = "sha256:6fb50a8f96cf938ef3ab9aac52738d0c380b1afa1d0fd6b0492287e345ccaf5b", size = 142216, upload-time = "2026-06-04T17:13:07.296Z" },
-    { url = "https://files.pythonhosted.org/packages/ff/72/0fd035426d1f51762d93fd056de14b55d00da2a565f2703ea26ec605697c/crcglot-0.12.0-cp311-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:b818b5a29bd73e6aefe7d68abf3cab4a357882a668147269e0ea7eeabfe7a0f3", size = 142356, upload-time = "2026-06-04T17:13:08.494Z" },
-    { url = "https://files.pythonhosted.org/packages/8d/20/cd3bc7ce5ee23a24376bb1f90c68e51f582890574d6f14609b2b32486588/crcglot-0.12.0-cp311-abi3-win_amd64.whl", hash = "sha256:78af6f393a56e8ab8b57fff7c12a00a420efcec5d209c0bc0bf84393f52d7be8", size = 126359, upload-time = "2026-06-04T17:13:09.718Z" },
-    { url = "https://files.pythonhosted.org/packages/c9/1e/ba9a41f0a4fcebf63087ee63293afd54fd6a3c6c56b53f873db5d13a0c52/crcglot-0.12.0-cp311-abi3-win_arm64.whl", hash = "sha256:bac5d7d9507abb13ca60918712995ebe665009b413c89346ce24fdaf3250889b", size = 124796, upload-time = "2026-06-04T17:13:10.975Z" },
+    { url = "https://files.pythonhosted.org/packages/d8/e0/ca6a53fa192ed7658deb11795c3e2e50c8e013fe0b844f65768ba12401bf/crcglot-0.14.0-cp311-abi3-macosx_11_0_arm64.whl", hash = "sha256:25dcfcc1024e44d011c04d5d34e4d50efdb4dd31057f102efb26231e83280f55", size = 146765, upload-time = "2026-06-05T21:52:21.976Z" },
+    { url = "https://files.pythonhosted.org/packages/d0/fa/892a927ccb3f94be7d3e986727e2f9a8b719177004fbcae6d5d6da8d9b34/crcglot-0.14.0-cp311-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:b45b40c7e327601b6e4b307424c4748b962b0472cab90f1cf9792580972253ef", size = 165558, upload-time = "2026-06-05T21:52:23.608Z" },
+    { url = "https://files.pythonhosted.org/packages/08/3f/c28e058c48bf08d57a983a9c942aaa5fd90e9ed99c6536b5c2c7884bdc5c/crcglot-0.14.0-cp311-abi3-manylinux_2_5_x86_64.manylinux1_x86_64.manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:7aca1b44bf56e05fa9cc3425a457516d30c024763a8b818c26586e55141b58b8", size = 165857, upload-time = "2026-06-05T21:52:24.729Z" },
+    { url = "https://files.pythonhosted.org/packages/00/87/4136755b5d3b813dce92534b1d4812c6e07d8c708a224e86e2429b33fad5/crcglot-0.14.0-cp311-abi3-musllinux_1_2_aarch64.whl", hash = "sha256:22dd06c87bf2327238f19fbc1a81c938fc238d848386754dbbc18126694d3059", size = 165663, upload-time = "2026-06-05T21:52:26.135Z" },
+    { url = "https://files.pythonhosted.org/packages/45/6d/df1242b145890cbadbeb2622fda12c5026ef1d1f21dd7ef6ac8d146e3163/crcglot-0.14.0-cp311-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:7dc9f17419d63ef2a356fd1359cfa44ab7003bb93dd911f0a73ef8de1a5b82a8", size = 165806, upload-time = "2026-06-05T21:52:27.547Z" },
+    { url = "https://files.pythonhosted.org/packages/5b/5a/912d66cbb707e68830f791ff710ecb36ed357becf68ad50ff327fd216581/crcglot-0.14.0-cp311-abi3-win_amd64.whl", hash = "sha256:95758bb1a53a2d11592a90f79153201b1b07f98a7f97207787a68706ffe080f6", size = 149910, upload-time = "2026-06-05T21:52:29.846Z" },
+    { url = "https://files.pythonhosted.org/packages/d6/21/332fabd90c43f6700855ea8355eaf8353d0782d10a70d829457c89913196/crcglot-0.14.0-cp311-abi3-win_arm64.whl", hash = "sha256:a5764ed45e8026a08b0af519778d2e5deb0e92142d1dd9b42b5aa044af2c614a", size = 148347, upload-time = "2026-06-05T21:52:31.161Z" },
 ]
 
 [[package]]
@@ -722,7 +722,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "crcglot", specifier = ">=0.12,<0.13" },
+    { name = "crcglot", specifier = ">=0.14,<0.15" },
     { name = "streamlit", specifier = ">=1.57.0" },
     { name = "upstash-redis", specifier = ">=1.4.0" },
 ]

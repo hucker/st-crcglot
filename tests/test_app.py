@@ -367,6 +367,44 @@ def test_catalog_code_gen_bundles_multiple_algorithms_into_one_java_file(at):
         )
 
 
+def test_catalog_code_gen_passes_comment_style_to_java_doxygen(at):
+    """Catalog Code Gen with Java + Doxygen should produce output
+    carrying Doxygen block markers (`/**`, `@param`).
+
+    Regression target for the new Comment style picker added in this
+    PR: if the picker's value were dropped on the way through
+    ``render_generate_section`` → ``generate_catalogue`` → crcglot,
+    the output would silently emit `plain` and the `@param` assert
+    would fail.  Picks Java (single-file language) so the assertion
+    is against one combined pane rather than .h/.c side-by-side.
+    """
+    # Arrange: keep default crc32 selection; switch language to Java
+    # and comment style to Doxygen.
+    at.segmented_control(key="cat_gen_lang").set_value("java").run()
+    at.segmented_control(key="cat_gen_comment_style").set_value("doxygen").run()
+    expected_block_marker = "/**"
+    expected_tag = "@param"
+
+    # Act
+    at.button(key="cat_gen_go").click().run()
+
+    # Assert: Doxygen block-comment markers present.  Plain Java would
+    # carry `//` line comments and no `@param` tags; Doxygen renders
+    # `/** @brief @param @return */` block comments.
+    actual_codes = [c.value for c in at.code if c.value]
+    actual_joined = "\n".join(actual_codes)
+    assert expected_block_marker in actual_joined, (
+        f"java + doxygen output should carry Doxygen block-comment "
+        f"opener {expected_block_marker!r}; first 400 chars: "
+        f"{actual_joined[:400]!r}"
+    )
+    assert expected_tag in actual_joined, (
+        f"java + doxygen output should carry the {expected_tag!r} tag "
+        f"on at least one function; first 400 chars: "
+        f"{actual_joined[:400]!r}"
+    )
+
+
 def test_reverse_no_match_shows_warning(at):
     """When the input doesn't match any catalog algorithm under either
     byte order, the View Result block should render an ``st.warning``

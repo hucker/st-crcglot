@@ -31,6 +31,7 @@ from __future__ import annotations
 import pytest
 
 from crc_lib import (
+    LANGUAGES,
     _human_separator,
     available_variants,
     available_variants_bundle,
@@ -794,4 +795,195 @@ class TestGenerateCatalogueBundle:
         assert source.count('#include "mycrcs.h"') == 1, (
             f"merged C source should #include the bundle stem header "
             f"exactly once; got {source.count('#include "mycrcs.h"')}"
+        )
+
+
+# ---------- Comment style: LanguageInfo.styles ----------
+#
+# crcglot exposes the (language, style) matrix via the new
+# `LanguageInfo.styles` property and the dataclass `StyleInfo`.  We
+# don't re-test the matrix's contents -- crcglot owns that -- but we
+# pin the boundary properties our UI relies on: every language always
+# offers `plain`, and a known language-specific style (Python's
+# `numpy`) does NOT leak into an unrelated language (Rust).
+
+
+class TestLanguageInfoStyles:
+    """Boundary invariants of `LANGUAGES[lang].styles` consumed by the
+    Comment style picker in `render_generate_section`."""
+
+    @pytest.mark.parametrize("lang", sorted(LANGUAGES))
+    def test_every_language_offers_plain_and_orders_it_first(self, lang):
+        # Arrange: every language must offer `plain` -- it's the
+        # cross-language default and the fallback our picker snaps to
+        # when a previously-picked style becomes invalid.
+
+        # Act
+        actual_styles = [s.name for s in LANGUAGES[lang].styles]
+
+        # Assert: non-empty, plain present, plain is element [0] (the
+        # snap-to-default in `render_generate_section` relies on this).
+        assert actual_styles, f"{lang}: styles tuple must be non-empty"
+        assert "plain" in actual_styles, (
+            f"{lang}: every language should offer 'plain'; got {actual_styles!r}"
+        )
+        assert actual_styles[0] == "plain", (
+            f"{lang}: 'plain' should be the first style so picker snap-to "
+            f"is deterministic; got order {actual_styles!r}"
+        )
+
+    def test_python_offers_numpy_rust_does_not(self):
+        # Arrange: pin one mutually-exclusive case -- numpy applies to
+        # Python only.  If a future crcglot release accidentally added
+        # it to Rust's matrix the Comment style picker would offer an
+        # invalid choice and crcglot would reject it at generation.
+        python_styles = {s.name for s in LANGUAGES["python"].styles}
+        rust_styles = {s.name for s in LANGUAGES["rust"].styles}
+
+        # Act + Assert: one positive, one negative.
+        assert "numpy" in python_styles, (
+            f"python should offer numpy; got {sorted(python_styles)!r}"
+        )
+        assert "numpy" not in rust_styles, (
+            f"rust should NOT offer numpy; got {sorted(rust_styles)!r}"
+        )
+
+    def test_verilog_offers_only_plain(self):
+        # Arrange: HDL targets have no doc-tool conventions, so the
+        # matrix collapses to just plain.  Our picker still renders
+        # with one option (per user UX preference -- no widget flicker).
+        expected = ["plain"]
+
+        # Act
+        actual = [s.name for s in LANGUAGES["verilog"].styles]
+
+        # Assert: exactly one option, and it's plain.
+        assert actual == expected, (
+            f"verilog should expose only {expected!r}; got {actual!r}"
+        )
+
+
+# ---------- generate_catalogue: comment_style threading ----------
+#
+# The new `comment_style` kwarg landed on each per-language generator
+# in crcglot 0.13; we forward it through `generate_catalogue` and
+# `generate_custom`.  Tests pin (a) byte-identity of the default path
+# so existing callers keep working, (b) the kwarg actually reaches the
+# generator (style-specific marker appears in output), (c) crcglot's
+# validation errors propagate.
+
+
+class TestGenerateCatalogueCommentStyle:
+    """`comment_style` kwarg dispatch + validation propagation."""
+
+    def test_default_style_is_plain_and_byte_identical_to_omitted_kwarg(self):
+        # Arrange: the default value MUST match crcglot's pre-styling
+        # output so callers that don't pass `comment_style` keep getting
+        # the same bytes they got before this PR.  If the default ever
+        # drifts to e.g. "doxygen" silently, this test catches it.
+
+        # Act
+        actual_omitted = generate_catalogue("c", "crc32", "bitwise", "crc32")
+        actual_explicit_plain = generate_catalogue(
+            "c", "crc32", "bitwise", "crc32", comment_style="plain"
+        )
+
+        # Assert: byte-for-byte identical output.
+        assert actual_omitted == actual_explicit_plain, (
+            "default comment_style should equal explicit 'plain'; any "
+            "drift breaks backward compat for callers that omit the kwarg"
+        )
+
+    def test_doxygen_c_output_contains_at_param_marker(self):
+        # Arrange: doxygen-style C output emits `@param` in the header
+        # block; plain output does not.  This is a structural marker
+        # crcglot owns -- we don't pin the exact text, just the
+        # presence/absence of the doxygen-specific keyword.
+        marker = "@param"
+
+        # Act
+        header_plain, _ = generate_catalogue(
+            "c", "crc32", "bitwise", "crc32", comment_style="plain"
+        )
+        header_doxygen, _ = generate_catalogue(
+            "c", "crc32", "bitwise", "crc32", comment_style="doxygen"
+        )
+
+        # Assert: marker absent in plain, present in doxygen.  The
+        # before/after differential is what proves our wrapper actually
+        # threaded the kwarg through (vs accepting it and dropping it).
+        assert marker not in header_plain, (
+            f"plain C header should NOT carry {marker!r}; first 300 chars: "
+            f"{header_plain[:300]!r}"
+        )
+        assert marker in header_doxygen, (
+            f"doxygen C header should carry {marker!r}; first 300 chars: "
+            f"{header_doxygen[:300]!r}"
+        )
+
+    def test_numpy_python_output_contains_parameters_underline(self):
+        # Arrange: numpydoc renders an underlined `Parameters` /
+        # `----------` block inside each function docstring.  The
+        # underline comes out indented (4 spaces, matching the
+        # docstring's enclosing block), so the structural marker is
+        # `Parameters\n    ----------` -- the leading whitespace is
+        # numpy-style-specific.  If our wrapper dropped `comment_style`
+        # on the way through, the python output would be plain and the
+        # underline would be missing entirely.
+        marker = "Parameters\n    ----------"
+
+        # Act
+        actual = generate_catalogue(
+            "python", "crc32", "bitwise", "crc32", comment_style="numpy"
+        )
+
+        # Assert: numpydoc underline present at least once (it appears
+        # once per function that takes parameters).
+        assert marker in actual, (
+            f"numpy Python output should contain a numpydoc "
+            f"`Parameters` underline; not found in output of "
+            f"{len(actual)} bytes.  Excerpt around 'Parameters' "
+            f"(if any): {actual[actual.find('Parameters') : actual.find('Parameters') + 200] if 'Parameters' in actual else '<no Parameters keyword found>'!r}"
+        )
+
+    def test_invalid_style_for_language_raises(self):
+        # Arrange: doxygen does not apply to Rust (doxygen reads C-family
+        # syntax, not Rust).  crcglot rejects the combination at the
+        # generator boundary with a ValueError; our wrapper does NOT
+        # swallow it -- the picker disables invalid combinations, but
+        # if a caller bypasses the picker the error must propagate.
+
+        # Act + Assert: ValueError from crcglot reaches the caller
+        # unchanged (no broad-except in `generate_catalogue`).
+        with pytest.raises(ValueError, match="doxygen"):
+            generate_catalogue(
+                "rust", "crc32", "bitwise", "crc32", comment_style="doxygen"
+            )
+
+    def test_comment_style_applies_uniformly_across_bundled_algorithms(self):
+        # Arrange: bundle mode applies the same style to every algorithm.
+        # crcglot's combiner takes no `comment_style` kwarg -- the style
+        # is baked into each per-algorithm output upstream and the
+        # combiner just stitches.  This test confirms our wrapper does
+        # the per-algo style forwarding, not a single doc block.
+        marker = "@param"
+
+        # Act: bundle two algorithms with doxygen style; @param should
+        # appear at least twice (once per algorithm's doc blocks).
+        header, _ = generate_catalogue(
+            "c",
+            ["crc32", "crc16-modbus"],
+            "bitwise",
+            "mycrcs",
+            comment_style="doxygen",
+        )
+
+        # Assert: marker count at least matches the algorithm count.
+        # If we forwarded style only to the first call (single-algo
+        # bypass) the second algorithm's blocks would be plain.
+        actual_count = header.count(marker)
+        assert actual_count >= 2, (
+            f"bundled doxygen output should carry {marker!r} for each "
+            f"algorithm; got {actual_count} occurrence(s).  Header excerpt: "
+            f"{header[:600]!r}"
         )

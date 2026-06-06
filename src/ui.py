@@ -23,7 +23,6 @@ from crc_lib import (
     REPO_URL,
     REVERSE_KEY,
     SENTINEL_CUSTOM,
-    VARIANTS,
     alg_label,
     app_version,
     available_variants_bundle,
@@ -42,6 +41,9 @@ from crc_lib import (
     padding_pills,
     parse_hex,
     parse_hex_bytes,
+    style_info,
+    style_label,
+    variant_info,
     variant_label,
 )
 
@@ -636,6 +638,165 @@ def render_test_vector_display(
 # ---------- Action sections (shared by tab bodies) ----------
 
 
+# Per-target stdlib (or canonical-package) drop-in for IEEE CRC-32.  Used
+# by `_generation_advice` to surface the faster path when the user picks
+# `crc32` -- catalogue-derived algorithm name `crc32` is the only entry
+# where every modern language has a hardware-accelerated equivalent.
+# Verilog / VHDL omitted: HDL has no "stdlib"; the emitted RTL is the
+# implementation.
+_CRC32_STDLIB_HINT: dict[str, str] = {
+    "c": "`<zlib.h>`'s `crc32(0, buf, len)`",
+    "csharp": "`System.IO.Hashing.Crc32` (.NET 6+)",
+    "go": "`hash/crc32` stdlib: `crc32.ChecksumIEEE(buf)`",
+    "java": "`java.util.zip.CRC32` stdlib",
+    "python": "`zlib.crc32(data)` stdlib",
+    "rust": "the `crc32fast` crate: `crc32fast::hash(buf)`",
+    "typescript": "the `crc-32` npm package: `CRC32.buf(buf)`",
+}
+
+
+def _generation_advice(lang: str, names: list[str]) -> list[tuple[str, str]]:
+    """Per-target informational notes about faster alternatives.
+
+    Returns a list of ``(severity, markdown)`` tuples rendered above
+    the symbol input.  ``severity`` is ``"warning"`` (yellow
+    :func:`st.warning`) or ``"info"`` (blue :func:`st.info`).  Empty
+    list when the emitted code is already the canonical answer (HDL
+    targets, custom CRCs, anything that isn't ``crc32`` on a compiled
+    target).
+
+    Two mutually exclusive triggers:
+
+    - **Python target** (any algorithm, ``"warning"`` severity): the
+      emitted Python is interpreted pure-Python, much slower than
+      crcglot's own runtime (which dispatches to a C extension and,
+      for IEEE CRC-32, ``zlib.crc32`` with CPU CRC instructions --
+      roughly 20× faster than the emitted code).  The warning frames
+      the emitted code as the porting-target answer rather than the
+      first choice.
+
+    - **IEEE CRC-32 on a compiled target** (``"info"`` severity): the
+      language has a stdlib or canonical-package CRC-32 implementation
+      using CPU hardware CRC instructions.  The emitted code is fine
+      for typical message sizes, but for large files or streaming
+      throughput the library path is faster.  Triggers if ``crc32`` is
+      anywhere in the selection (bundles benefit because at least one
+      algorithm has the fast path; the other bundled algorithms still
+      need the emitted code since stdlib doesn't carry CRC-16/MODBUS
+      etc.).
+
+    Custom mode never triggers either note: we can't statically tell
+    whether the user's parameters are CRC-32-equivalent, and "use
+    crcglot directly" doesn't help when the algorithm isn't catalogued.
+
+    Args:
+        lang: crcglot language code.
+        names: Selected algorithm names.
+
+    Returns:
+        Zero or one ``(severity, markdown)`` tuple.
+    """
+    notes: list[tuple[str, str]] = []
+
+    has_crc32 = "crc32" in names
+
+    if lang == "python":
+        # Python target -> warn that crcglot package itself is faster.
+        # Fold in the crc32-specific 20× figure when crc32 is in the
+        # selection; otherwise generalize to "close to C speed for any
+        # catalogue algorithm."
+        if has_crc32:
+            python_msg = (
+                "**For Python use cases, prefer the `crcglot` package "
+                "itself.**  `pip install crcglot` and call "
+                "`crcglot.encode_int(data, 'crc32')` -- it dispatches "
+                "to `zlib.crc32` (CPU CRC instructions), **~20× faster** "
+                "than the emitted pure-Python code.  Generate the code "
+                "below if you need a self-contained Python file (no "
+                "crcglot install on the target, locked-down environment, "
+                "etc.)."
+            )
+        else:
+            head = ", ".join(f"`'{n}'`" for n in names[:3])
+            tail = "" if len(names) <= 3 else f" (+{len(names) - 3} more)"
+            python_msg = (
+                "**For Python use cases, prefer the `crcglot` package "
+                "itself.**  `pip install crcglot` and call "
+                f"`crcglot.encode_int(data, name)` with name = {head}"
+                f"{tail} -- it uses the fastest available implementation, "
+                "**close to C speed** for any catalogue algorithm. "
+                "Generate the code below if you need a self-contained "
+                "Python file (no crcglot install on the target, "
+                "locked-down environment, etc.)."
+            )
+        notes.append(("warning", python_msg))
+
+    elif has_crc32 and lang in _CRC32_STDLIB_HINT:
+        # Compiled target + crc32: emitted code is fine for typical
+        # message sizes, but a library path is faster for large data /
+        # streaming.  Soft info note, not a warning -- the emitted code
+        # is still correct, just not optimal for high-throughput cases.
+        notes.append(
+            (
+                "info",
+                f"**Faster CRC-32 path available in "
+                f"{LANGUAGES[lang].display_name}**: "
+                f"{_CRC32_STDLIB_HINT[lang]}.  The code below is fine for "
+                "small messages, but for large files or streaming "
+                "throughput consider that library -- it typically uses "
+                "CPU CRC instructions when the target processor supports "
+                "them.",
+            )
+        )
+
+    return notes
+
+
+def _build_symbol_preview(
+    lang: str,
+    names: list[str],
+    symbol: str,
+    is_bundle: bool,
+) -> str:
+    """Render the "Will produce: …" caption shown under the symbol input.
+
+    Single-vs-bundle is the disambiguator users keep tripping over: the
+    symbol field doubles as a function name in single-algo mode but is
+    just a file stem in bundle mode (each bundled algorithm keeps its
+    own catalogue-derived function name).  The preview line turns that
+    abstract distinction into something concrete -- "your value `crc32`
+    will produce these files and this function" -- so the user can see
+    exactly what the field is controlling without having to read the
+    help tooltip.
+
+    Args:
+        lang: crcglot language code.
+        names: Algorithm names; ``[SENTINEL_CUSTOM]`` for custom mode.
+        symbol: Current value of the symbol text input (stripped).
+        is_bundle: Multi-algorithm catalog bundle (`len(names) > 1`).
+
+    Returns:
+        Markdown for a one-line ``st.caption``.  Empty-symbol case
+        renders a "type a name above" hint so the line is never blank.
+    """
+    s = symbol.strip()
+    if not s:
+        return "_Type a name above to preview what the generator will produce._"
+    extensions = LANGUAGES[lang].extensions
+    files_md = " + ".join(f"`{s}{ext}`" for ext in extensions)
+    if is_bundle:
+        # Bundle: each algorithm keeps its catalog name (with hyphens
+        # converted to underscores, same rule the generator follows).
+        # Truncate the list at 3 to keep the line short on big bundles.
+        head_funcs = [f"`{default_symbol(n)}(...)`" for n in names[:3]]
+        suffix = "" if len(names) <= 3 else f", …  ({len(names)} total)"
+        return (
+            f"**Will produce:** {files_md} — functions: {', '.join(head_funcs)}{suffix}"
+        )
+    # Single-algo (catalog or custom): the symbol IS the function name.
+    return f"**Will produce:** {files_md} — function `{s}(...)`"
+
+
 def render_generate_section(
     names: list[str],
     entry: AlgorithmInfo | None,
@@ -695,11 +856,13 @@ def render_generate_section(
 
     variants = available_variants_bundle(lang, [int(w) for w in widths])
 
-    # Help text tracks the currently-selected variant.
+    # Help text tracks the currently-selected variant.  Labels and
+    # descriptions read live from crcglot's `variant_info()` so they
+    # stay in sync with the library.
     _prev_variant = st.session_state.get(f"{key_prefix}_variant_picker") or variants[0]
     if _prev_variant not in variants:
         _prev_variant = variants[0]
-    _, _variant_name, _variant_desc = VARIANTS[_prev_variant]
+    _prev_variant_info = variant_info(_prev_variant)
 
     variant = (
         st.segmented_control(
@@ -708,23 +871,60 @@ def render_generate_section(
             format_func=variant_label,
             default=variants[0],
             key=f"{key_prefix}_variant_picker",
-            help=f"{_variant_name}: {_variant_desc}",
+            help=f"{_prev_variant_info.label}: {_prev_variant_info.description}",
         )
         or variants[0]
     )
     st.caption(
-        f"{VARIANTS[variant][2]}  "
+        f"{variant_info(variant).description}  "
         "Speed-up figures are rough — see "
         "[crcglot's BENCHMARKS.md]"
         "(https://github.com/hucker/crcglot/blob/main/BENCHMARKS.md) "
         "for measured numbers."
     )
 
+    # Comment style picker -- single-select, language-aware.  Always
+    # rendered (even when only `plain` applies) so the UI doesn't flicker
+    # as the user switches between languages.  Stale styles (e.g. doxygen
+    # carried over from C to Rust) snap to the first valid style for the
+    # new language; crcglot orders `plain` first in every language's
+    # `.styles` tuple so the snap is deterministic.
+    styles = [s.name for s in LANGUAGES[lang].styles]
+    style_state_key = f"{key_prefix}_comment_style"
+    prev_style = st.session_state.get(style_state_key)
+    if prev_style not in styles:
+        prev_style = styles[0]
+    _prev_style_info = style_info(prev_style)
+    comment_style = (
+        st.segmented_control(
+            "Comment style",
+            styles,
+            format_func=style_label,
+            default=prev_style,
+            key=style_state_key,
+            help=f"{_prev_style_info.label}: {_prev_style_info.description}",
+        )
+        or prev_style
+    )
+    st.caption(style_info(comment_style).description)
+
+    # Surface faster-alternative notes when applicable: Python target
+    # (use crcglot package directly -- warning severity), or IEEE
+    # crc32 on a compiled target (stdlib has hardware-accelerated
+    # CRC -- info severity).  See `_generation_advice` for triggers.
+    # Custom mode never triggers either note.
+    if not is_custom:
+        for severity, note in _generation_advice(lang, names):
+            if severity == "warning":
+                st.warning(note)
+            else:
+                st.info(note)
+
     sym_col, btn_col = st.columns([3, 1], vertical_alignment="bottom")
     if is_custom:
         default_sym = "custom_crc"
     elif is_bundle:
-        default_sym = "crcs"  # neutral bundle stem; user can override
+        default_sym = "crc_bundle"  # neutral bundle stem; user can override
     else:
         default_sym = default_symbol(first_name)
 
@@ -762,6 +962,12 @@ def render_generate_section(
             key=f"{key_prefix}_go",
         )
 
+    # Concrete preview of what the symbol value becomes -- file
+    # names (always) plus function name (single-algo) or per-algo
+    # function names (bundle).  Renders below the row so it doesn't
+    # disturb the input/button baseline alignment.
+    st.caption(_build_symbol_preview(lang, names, symbol, is_bundle))
+
     if go:
         try:
             if is_custom:
@@ -772,13 +978,24 @@ def render_generate_section(
                 # the type for the static checker.
                 assert entry is not None
                 result = generate_custom(
-                    lang, symbol.strip(), entry, variant, symbol.strip()
+                    lang,
+                    symbol.strip(),
+                    entry,
+                    variant,
+                    symbol.strip(),
+                    comment_style=comment_style,
                 )
             else:
                 # Catalog mode: pass the list -- generate_catalogue
                 # picks the single-algo path or routes through the
                 # language's combiner based on len(names).
-                result = generate_catalogue(lang, names, variant, symbol.strip())
+                result = generate_catalogue(
+                    lang,
+                    names,
+                    variant,
+                    symbol.strip(),
+                    comment_style=comment_style,
+                )
         except ValueError as e:
             st.error(str(e))
             st.stop()
