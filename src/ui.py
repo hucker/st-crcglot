@@ -20,6 +20,7 @@ from crc_lib import (
     AlgorithmInfo,
     CALC_KEY,
     LANGUAGES,
+    NAMING_ORDER,
     REPO_URL,
     REVERSE_KEY,
     SENTINEL_CUSTOM,
@@ -40,6 +41,7 @@ from crc_lib import (
     git_revision,
     lang_label,
     load_stats,
+    naming_info,
     padding_pills,
     parse_hex,
     parse_hex_bytes,
@@ -910,6 +912,31 @@ def render_generate_section(
     )
     st.caption(style_info(comment_style).description)
 
+    # Naming convention picker -- language-aware; defaults to whatever
+    # crcglot considers idiomatic for the target (e.g. PascalCase for
+    # C#, snake_case for C/Rust/Python).  Same survives-language-switch
+    # pattern as comment style, with the fallback going to the new
+    # language's idiomatic default rather than the first list element.
+    namings = sorted(LANGUAGES[lang].naming, key=NAMING_ORDER.index)
+    naming_state_key = f"{key_prefix}_naming"
+    prev_naming = st.session_state.get(naming_state_key)
+    if prev_naming not in namings:
+        prev_naming = LANGUAGES[lang].default_naming
+    _prev_naming_info = naming_info(prev_naming)
+
+    naming = (
+        st.segmented_control(
+            "Naming convention",
+            namings,
+            format_func=lambda n: naming_info(n).label,
+            default=prev_naming,
+            key=naming_state_key,
+            help=f"{_prev_naming_info.label}: {_prev_naming_info.description}",
+        )
+        or prev_naming
+    )
+    st.caption(naming_info(naming).description)
+
     # Surface faster-alternative notes when applicable: Python target
     # (use crcglot package directly -- warning severity), or IEEE
     # crc32 on a compiled target (stdlib has hardware-accelerated
@@ -986,6 +1013,7 @@ def render_generate_section(
                     variant,
                     symbol.strip(),
                     comment_style=comment_style,
+                    naming=naming,
                 )
             else:
                 # Catalog mode: pass the list -- generate_catalogue
@@ -997,6 +1025,7 @@ def render_generate_section(
                     variant,
                     symbol.strip(),
                     comment_style=comment_style,
+                    naming=naming,
                 )
         except ValueError as e:
             st.error(str(e))

@@ -23,10 +23,12 @@ from crcglot import (
     AlgorithmInfo,
     CrcStream,  # noqa: F401  -- re-exported through ui.py
     LANGUAGES,
+    NAMING_ORDER,  # noqa: F401  -- re-exported through ui.py
     crc_stream,  # noqa: F401  -- re-exported through ui.py
     detect,
     encode_int,
     generic_crc,
+    naming_info,  # noqa: F401  -- re-exported through ui.py
     variant_info,
 )
 from crcglot.comments import style_info
@@ -574,6 +576,7 @@ def generate_catalogue(
     variant: str,
     symbol: str,
     comment_style: str = "plain",
+    naming: str = "snake",
 ):
     """Generate code for one or more named catalog algorithms.
 
@@ -617,9 +620,12 @@ def generate_catalogue(
             symbol=symbol or None,
             variant=variant,
             comment_style=comment_style,
+            naming=naming,
         )
     outputs = [
-        info.generator(n, variant=variant, comment_style=comment_style)
+        info.generator(
+            n, variant=variant, comment_style=comment_style, naming=naming,
+        )
         for n in name_list
     ]
     return info.combiner(outputs, stem=symbol or None)
@@ -632,6 +638,7 @@ def generate_custom(
     variant: str,
     symbol: str,
     comment_style: str = "plain",
+    naming: str = "snake",
 ):
     """Generate code from a custom :class:`AlgorithmInfo` instead of a name.
 
@@ -656,6 +663,7 @@ def generate_custom(
         symbol=symbol or None,
         variant=variant,
         comment_style=comment_style,
+        naming=naming,
     )
 
 
