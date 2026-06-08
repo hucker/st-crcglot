@@ -25,9 +25,11 @@ from crc_lib import (
     SENTINEL_CUSTOM,
     alg_label,
     app_version,
+    CrcStream,
     available_variants_bundle,
     bump_stats,
     catalogue_names,
+    crc_stream,
     crcglot_version,
     default_symbol,
     detect_chunk,
@@ -1078,9 +1080,28 @@ def render_calculate_section(
 
     mode_state_key = f"{key_prefix}_input_mode"
     text_state_key = f"{key_prefix}_text"
+    file_widget_key = f"{key_prefix}_file"
+    file_interp_key = f"{key_prefix}_file_interp"
 
+    # Hoist the input-format picker above the test-vector checkbox so the
+    # rest of the controls (test vector, input widget, button disable) can
+    # branch on it.
+    mode_col, _ = st.columns([1, 3], vertical_alignment="bottom")
+    with mode_col:
+        input_mode = (
+            st.segmented_control(
+                "Input format",
+                ["Text", "Hex", "File"],
+                default="Text",
+                key=mode_state_key,
+            )
+            or "Text"
+        )
+
+    # Test-vector loader only makes sense for Text/Hex — there's no input
+    # field to inject `b"123456789"` into when the user has chosen File.
     use_test_vector = False
-    if allow_verify:
+    if allow_verify and input_mode != "File":
         use_tv_key = f"{key_prefix}_use_tv"
         prev_tv_key = f"{key_prefix}_prev_tv"
 
@@ -1109,45 +1130,65 @@ def render_calculate_section(
                 st.session_state[text_state_key] = "123456789"
         st.session_state[prev_tv_key] = use_test_vector
 
-    mode_col, _ = st.columns([1, 3], vertical_alignment="bottom")
-    with mode_col:
-        input_mode = (
-            st.segmented_control(
-                "Input format",
-                ["Text", "Hex"],
-                default="Text",
-                key=mode_state_key,
-            )
-            or "Text"
+    if input_mode == "File":
+        uploaded = st.file_uploader(
+            "Input file",
+            key=file_widget_key,
+            help=(
+                "**Raw bytes**: every byte of the uploaded file is fed to "
+                "the CRC as-is.  Use for firmware images, packet captures, "
+                "or any artifact you want to verify in place.\n\n"
+                "**Hex dump**: the file is read as ASCII text and run "
+                "through the same parser the Hex input mode uses — "
+                "`0x` prefixes, `:`, `,`, and whitespace are stripped, "
+                "and the remainder must be valid hex pairs.  Use for "
+                "Wireshark / `xxd` / debugger output."
+            ),
         )
-
-    text = st.text_area(
-        "Input data",
-        height=120,
-        placeholder=(
-            "de ad be ef\n0xCA:0xFE\n0x12, 0x34"
-            if input_mode == "Hex"
-            else "Type or paste any text..."
-        ),
-        help=(
-            "**Text mode**: input is encoded as UTF-8 bytes.\n\n"
-            "**Hex mode**: strips `0x` / `0X` prefixes, `:`, `,`, and "
-            "whitespace, then consumes the remainder as two-nibble byte "
-            "pairs.  Odd-length input or non-hex chars after stripping "
-            "are rejected with a clear error."
-        ),
-        key=text_state_key,
-    )
+        file_interp = (
+            st.segmented_control(
+                "Interpret file as",
+                ["Raw bytes", "Hex dump"],
+                default="Raw bytes",
+                key=file_interp_key,
+            )
+            or "Raw bytes"
+        )
+        text = ""
+    else:
+        uploaded = None
+        file_interp = "Raw bytes"
+        text = st.text_area(
+            "Input data",
+            height=120,
+            placeholder=(
+                "de ad be ef\n0xCA:0xFE\n0x12, 0x34"
+                if input_mode == "Hex"
+                else "Type or paste any text..."
+            ),
+            help=(
+                "**Text mode**: input is encoded as UTF-8 bytes.\n\n"
+                "**Hex mode**: strips `0x` / `0X` prefixes, `:`, `,`, and "
+                "whitespace, then consumes the remainder as two-nibble byte "
+                "pairs.  Odd-length input or non-hex chars after stripping "
+                "are rejected with a clear error."
+            ),
+            key=text_state_key,
+        )
 
     _, btn_col = st.columns([3, 1], vertical_alignment="bottom")
     with btn_col:
+        button_disabled = (
+            uploaded is None if input_mode == "File"
+            else not text.strip()
+        )
         # Button label reflects what's actually about to happen: only say
         # "Verify" when verification is on (allow_verify AND test-vector
         # checkbox is checked).
         calc_go = st.button(
             "Calculate / Verify" if use_test_vector else "Calculate",
             type="primary",
-            disabled=not text.strip(),
+            disabled=button_disabled,
             use_container_width=True,
             icon=":material/calculate:",
             key=f"{key_prefix}_go",
@@ -1156,33 +1197,75 @@ def render_calculate_section(
     if not calc_go:
         return
 
-    if input_mode == "Hex":
-        try:
-            data = parse_hex_bytes(text)
-        except ValueError as e:
-            st.error(str(e))
-            return
-        if not data:
-            st.error("Hex input is empty after stripping separators.")
-            return
-    else:
-        data = text.encode("utf-8")
+    # File + Raw bytes is the only path that can be truly streamed --
+    # feed crcglot 0.15's CrcStream a fixed-size chunk at a time so the
+    # peak in-process memory is bounded by chunk_size, not file size.
+    # Hex-dump interpretation needs the whole text in memory before
+    # parsing anyway (hex chars span chunk boundaries), so that branch
+    # stays single-shot, as do Text and Hex (textarea) modes.
+    streaming = input_mode == "File" and file_interp == "Raw bytes"
 
-    # Defer to crcglot: catalog algorithms compute via encode_int(name);
-    # custom algorithms have no registered name so we hand crcglot the
-    # raw parameter tuple from the user's typed AlgorithmInfo.
-    if name is not None and name in ALGORITHMS:
-        value = encode_int(data, name)
+    if streaming:
+        if name is not None and name in ALGORITHMS:
+            stream = crc_stream(name)
+        else:
+            stream = CrcStream(
+                width=entry.width,
+                poly=entry.poly,
+                init=entry.init,
+                refin=entry.refin,
+                refout=entry.refout,
+                xorout=entry.xorout,
+            )
+        total_bytes = 0
+        uploaded.seek(0)
+        while True:
+            chunk = uploaded.read(256 * 1024)
+            if not chunk:
+                break
+            stream.update(chunk)
+            total_bytes += len(chunk)
+        value = stream.digest()
     else:
-        value = generic_crc(
-            data,
-            entry.width,
-            entry.poly,
-            entry.init,
-            entry.refin,
-            entry.refout,
-            entry.xorout,
-        )
+        if input_mode == "File":
+            raw = uploaded.getvalue()
+            try:
+                data = parse_hex_bytes(raw.decode("ascii", errors="ignore"))
+            except ValueError as e:
+                st.error(f"Hex-dump parse error: {e}")
+                return
+            if not data:
+                st.error("File contained no hex digits after stripping separators.")
+                return
+        elif input_mode == "Hex":
+            try:
+                data = parse_hex_bytes(text)
+            except ValueError as e:
+                st.error(str(e))
+                return
+            if not data:
+                st.error("Hex input is empty after stripping separators.")
+                return
+        else:
+            data = text.encode("utf-8")
+
+        # Defer to crcglot: catalog algorithms compute via encode_int(name);
+        # custom algorithms have no registered name so we hand crcglot the
+        # raw parameter tuple from the user's typed AlgorithmInfo.
+        if name is not None and name in ALGORITHMS:
+            value = encode_int(data, name)
+        else:
+            value = generic_crc(
+                data,
+                entry.width,
+                entry.poly,
+                entry.init,
+                entry.refin,
+                entry.refout,
+                entry.xorout,
+            )
+        total_bytes = len(data)
+
     nibbles = (entry.width + 3) // 4
     formatted = f"0x{value:0{nibbles}X}"
     bump_stats(CALC_KEY)
@@ -1192,7 +1275,7 @@ def render_calculate_section(
         st.subheader("View Result")
         st.markdown(
             f"**\U0001f9ee Computed CRC**  ·  `{label}`  ·  "
-            f"*{len(data):,} byte{'' if len(data) == 1 else 's'} input "
+            f"*{total_bytes:,} byte{'' if total_bytes == 1 else 's'} input "
             f"· {entry.width}-bit*",
         )
         st.code(formatted, language=None)

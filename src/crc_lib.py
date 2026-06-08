@@ -21,7 +21,9 @@ from typing import Literal
 from crcglot import (
     ALGORITHMS,
     AlgorithmInfo,
+    CrcStream,  # noqa: F401  -- re-exported through ui.py
     LANGUAGES,
+    crc_stream,  # noqa: F401  -- re-exported through ui.py
     detect,
     encode_int,
     generic_crc,
