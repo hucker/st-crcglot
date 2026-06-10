@@ -1334,6 +1334,10 @@ def render_calculate_section(
     streaming = input_mode == "File" and file_interp == "Raw bytes"
 
     if streaming:
+        # File mode reached here only with the button enabled, which
+        # requires a chosen file -- narrow `uploaded` from
+        # `UploadedFile | None` for the static checker.
+        assert uploaded is not None, "streaming path requires an uploaded file"
         if name is not None and name in ALGORITHMS:
             stream = crc_stream(name)
         else:
@@ -1356,6 +1360,9 @@ def render_calculate_section(
         value = stream.digest()
     else:
         if input_mode == "File":
+            # Button stays disabled until a file is chosen (see above) --
+            # narrow `uploaded` for the static checker.
+            assert uploaded is not None, "File mode requires an uploaded file"
             raw = uploaded.getvalue()
             try:
                 data = parse_hex_bytes(raw.decode("ascii", errors="ignore"))
