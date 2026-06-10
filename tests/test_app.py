@@ -595,3 +595,152 @@ def test_target_crc_field_only_renders_in_target_mode(at):
         f"rev_target should appear when CRC source is 'Target'; "
         f"saw keys {actual_target_keys!r}"
     )
+
+
+def test_catalog_basename_tracks_selection_single_bundle_single(at):
+    """The Code Gen basename re-defaults as the algorithm selection
+    changes: one algo -> its name, a bundle -> ``crc_bundle`` (crcglot's
+    ``default_stem``), and back to one algo -> the name again.
+
+    Regression target for the multiselect ``on_change`` reseed -- an
+    earlier inline version left ``crc_bundle`` stuck on screen after
+    dropping back to a single algorithm.
+    """
+    # Arrange: default selection is the single algo crc32.
+    actual_single = at.text_input(key="cat_gen_symbol").value
+
+    # Act: add a second algo (bundle), then drop back to one.
+    at.multiselect(key="cat_gen_alg_multiselect").set_value(
+        ["crc32", "crc16-modbus"]
+    ).run()
+    actual_bundle = at.text_input(key="cat_gen_symbol").value
+    at.multiselect(key="cat_gen_alg_multiselect").set_value(["crc32"]).run()
+    actual_back_to_single = at.text_input(key="cat_gen_symbol").value
+
+    # Assert: stem follows the selection in both directions.
+    expected_single = "crc32"
+    expected_bundle = "crc_bundle"
+    assert actual_single == expected_single, (
+        f"single-algo basename should be {expected_single!r}; got {actual_single!r}"
+    )
+    assert actual_bundle == expected_bundle, (
+        f"bundle basename should be {expected_bundle!r}; got {actual_bundle!r}"
+    )
+    assert actual_back_to_single == expected_single, (
+        f"dropping back to one algo should restore {expected_single!r}, not stay "
+        f"on the bundle stem; got {actual_back_to_single!r}"
+    )
+
+
+def test_catalog_basename_preserves_typed_override(at):
+    """A hand-typed basename survives a selection change -- the reseed
+    only overwrites a value the app itself last auto-seeded.
+
+    Regression target for the override guard (``_is_overridden``): without
+    it, changing the selection would clobber the user's text.
+    """
+    # Arrange: type a custom basename over the auto default.
+    at.text_input(key="cat_gen_symbol").set_value("my_special_crc").run()
+
+    # Act: change the selection (single -> bundle).
+    at.multiselect(key="cat_gen_alg_multiselect").set_value(
+        ["crc32", "crc16-modbus"]
+    ).run()
+    actual = at.text_input(key="cat_gen_symbol").value
+
+    # Assert: the override is preserved, not replaced by ``crc_bundle``.
+    expected = "my_special_crc"
+    assert actual == expected, (
+        f"a typed basename should survive a selection change; "
+        f"expected {expected!r}, got {actual!r}"
+    )
+
+
+def test_codegen_preview_shows_language_cased_filename(at):
+    """The "Will produce" preview renders the real per-language filename
+    via crcglot's ``format_filename`` -- Java PascalCases the file even
+    though the basename field holds the lowercase stem.
+
+    Regression target for the format_filename wiring: a plain
+    ``f"{stem}{ext}"`` would show ``crc32.java`` and mislead about the
+    generated class/file name.
+    """
+    # Arrange + Act: switch the target language to Java (stem stays crc32).
+    at.segmented_control(key="cat_gen_lang").set_value("java").run()
+
+    # Assert: the preview caption names the PascalCased Java file.
+    expected_filename = "Crc32.java"
+    actual_previews = [c.value for c in at.caption if "Will produce" in c.value]
+    assert any(expected_filename in p for p in actual_previews), (
+        f"Java preview should show the cased filename {expected_filename!r}; "
+        f"got previews {actual_previews!r}"
+    )
+
+
+def test_custom_name_and_basename_default_to_crc_width_custom(at):
+    """Custom Code Gen seeds "CRC Algorithm Name" to ``crc<width>_custom``
+    and the basename follows it -- mirroring how a catalogue pick seeds
+    the stem.  Changing the width retitles both.
+    """
+    # Arrange: defaults seed from crc32 (width 32).
+    actual_name_default = at.text_input(key="cust_gen_desc").value
+    actual_base_default = at.text_input(key="cust_gen_symbol").value
+
+    # Act: change the width to 16.
+    at.number_input(key="cust_gen_width").set_value(16).run()
+    actual_name_16 = at.text_input(key="cust_gen_desc").value
+    actual_base_16 = at.text_input(key="cust_gen_symbol").value
+
+    # Assert: both name and basename track the bit width.
+    assert actual_name_default == "crc32_custom", (
+        f"name should default to crc32_custom; got {actual_name_default!r}"
+    )
+    assert actual_base_default == "crc32_custom", (
+        f"basename should follow the name to crc32_custom; got {actual_base_default!r}"
+    )
+    assert actual_name_16 == "crc16_custom", (
+        f"width 16 should retitle the name to crc16_custom; got {actual_name_16!r}"
+    )
+    assert actual_base_16 == "crc16_custom", (
+        f"width 16 should retitle the basename to crc16_custom; got {actual_base_16!r}"
+    )
+
+
+def test_custom_check_auto_calculates_locks_and_unlocks(at):
+    """The custom Check field is auto-calculated and read-only by default,
+    recomputes when a parameter changes, and becomes editable when
+    Auto-calculate is unticked.
+    """
+    # Arrange: default is auto-calc on, showing crc32's check, locked.
+    actual_auto_default = at.checkbox(key="cust_gen_auto_check").value
+    actual_check_default = at.text_input(key="cust_gen_check").value
+    actual_locked_default = at.text_input(key="cust_gen_check").disabled
+
+    # Act (recompute): change the polynomial; the check should follow.
+    at.text_input(key="cust_gen_poly").set_value("0x1021").run()
+    actual_check_after_poly = at.text_input(key="cust_gen_check").value
+
+    # Act (unlock): turn Auto-calculate off; the field becomes editable.
+    at.checkbox(key="cust_gen_auto_check").set_value(False).run()
+    actual_locked_after_off = at.text_input(key="cust_gen_check").disabled
+
+    # Assert: default on + locked + seeded with crc32's check value.
+    assert actual_auto_default is True, (
+        f"Auto-calculate should default on; got {actual_auto_default!r}"
+    )
+    assert actual_check_default == "0xCBF43926", (
+        f"auto check should equal crc32's check value; got {actual_check_default!r}"
+    )
+    assert actual_locked_default is True, (
+        f"Check should be read-only while auto-calculated; got disabled="
+        f"{actual_locked_default!r}"
+    )
+    # Assert: recompute on param change, then editable when toggled off.
+    assert actual_check_after_poly != "0xCBF43926", (
+        f"changing the polynomial should recompute the check away from crc32's "
+        f"value; got {actual_check_after_poly!r}"
+    )
+    assert actual_locked_after_off is False, (
+        f"unticking Auto-calculate should make Check editable; got disabled="
+        f"{actual_locked_after_off!r}"
+    )
