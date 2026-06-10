@@ -756,8 +756,7 @@ class TestGenerateCatalogueBundle:
 
         # Assert: identical (GeneratedFile is a frozen dataclass).
         assert actual_single == actual_listed, (
-            "single-name and single-element-list paths should produce "
-            "identical output"
+            "single-name and single-element-list paths should produce identical output"
         )
 
     def test_java_bundle_wraps_in_one_container_class(self):
@@ -772,9 +771,7 @@ class TestGenerateCatalogueBundle:
         )
 
         # Assert: one file; filename==class; both algorithms present.
-        assert len(files) == 1, (
-            f"java bundle should be one file; got {len(files)}"
-        )
+        assert len(files) == 1, f"java bundle should be one file; got {len(files)}"
         gf = files[0]
         stem = gf.filename.removesuffix(".java")
         assert f"public final class {stem}" in gf.content, (
@@ -805,12 +802,10 @@ class TestGenerateCatalogueBundle:
         )
         by_role = {f.role: f for f in files}
         assert by_role["header"].filename == "mycrcs.h", (
-            f"header filename should be 'mycrcs.h'; got "
-            f"{by_role['header'].filename!r}"
+            f"header filename should be 'mycrcs.h'; got {by_role['header'].filename!r}"
         )
         assert by_role["source"].filename == "mycrcs.c", (
-            f"source filename should be 'mycrcs.c'; got "
-            f"{by_role['source'].filename!r}"
+            f"source filename should be 'mycrcs.c'; got {by_role['source'].filename!r}"
         )
         source = by_role["source"].content
         # crcglot rewrites per-algo self-includes to the one merged header.
@@ -930,7 +925,11 @@ class TestGenerateCatalogueCommentStyle:
             "c", names="crc32", variant="bitwise", symbol="crc32", comment_style="plain"
         )
         doxygen = generate_source_files(
-            "c", names="crc32", variant="bitwise", symbol="crc32", comment_style="doxygen"
+            "c",
+            names="crc32",
+            variant="bitwise",
+            symbol="crc32",
+            comment_style="doxygen",
         )
         header_plain = next(f for f in plain if f.role == "header").content
         header_doxygen = next(f for f in doxygen if f.role == "header").content
@@ -960,7 +959,11 @@ class TestGenerateCatalogueCommentStyle:
 
         # Act
         actual = generate_source_files(
-            "python", names="crc32", variant="bitwise", symbol="crc32", comment_style="numpy"
+            "python",
+            names="crc32",
+            variant="bitwise",
+            symbol="crc32",
+            comment_style="numpy",
         )[0].content
 
         # Assert: numpydoc underline present at least once (it appears
