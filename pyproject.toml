@@ -8,7 +8,7 @@ license-files = ["LICENSE"]
 authors = [{ name = "Chuck Bass" }]
 requires-python = ">=3.14"
 dependencies = [
-    "crcglot>=0.17,<0.18",
+    "crcglot>=0.18,<0.19",
     "streamlit>=1.57.0",
     "upstash-redis>=1.4.0",
 ]
@@ -20,12 +20,6 @@ dev = [
     "ruff>=0.15.15",
     "ty>=0.0.40",
 ]
-
-# Temporarily pin crcglot to the feat/format_filename branch while
-# wiring the language-aware basename casing.  Revert to main / the
-# registry source once that work lands in a crcglot release.
-[tool.uv.sources]
-crcglot = { git = "https://github.com/hucker/crcglot.git", branch = "feat/format-filename" }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

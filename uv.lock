@@ -174,8 +174,18 @@ wheels = [
 
 [[package]]
 name = "crcglot"
-version = "0.17.0"
-source = { git = "https://github.com/hucker/crcglot.git?branch=feat%2Fformat-filename#b8861a6a7f7673dbd82df3b5a96657e29d51c6c6" }
+version = "0.18.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/b9/fb/71e52a17f677035565f57af59856791ed6cea7737ee8b78e3df25ef79adc/crcglot-0.18.0.tar.gz", hash = "sha256:7493be1b3f0c73e3cd9d11ebdb0f9af2787cf5550cee2f571ca728675be50d18", size = 289019, upload-time = "2026-06-10T04:37:54.809Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/3a/91/ef99c41f31cbfc5bd0b115a8d91a4ff4b18a3df282cf816c1fd859bcbe61/crcglot-0.18.0-cp311-abi3-macosx_11_0_arm64.whl", hash = "sha256:2a12267b284a328a7748e474273e0146e4d8ad1afcb53636228d95817541d38d", size = 189466, upload-time = "2026-06-10T04:37:40.78Z" },
+    { url = "https://files.pythonhosted.org/packages/cc/92/bd0018b8e7e9d70ea44532621685e50f589bfd47bac505d78e08559ca7f9/crcglot-0.18.0-cp311-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:e28fe5bd4045be71a73037f5e5ff85c088f292db00415d3ff58f9b2ae56279a8", size = 207728, upload-time = "2026-06-10T04:37:47.295Z" },
+    { url = "https://files.pythonhosted.org/packages/f3/3c/372447d93d4ace69fe5bc30b299d88719c9592a1fbba38b989c9164221e4/crcglot-0.18.0-cp311-abi3-manylinux_2_5_x86_64.manylinux1_x86_64.manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:fd9d7623ef27fd1178da56ab846bb62396bdb827ca78daa72d81df0ff54c532a", size = 208160, upload-time = "2026-06-10T04:37:48.499Z" },
+    { url = "https://files.pythonhosted.org/packages/6a/a5/f0671812787c0c8208a37076cf0558bd623c361640c8afdd50a6a8953e34/crcglot-0.18.0-cp311-abi3-musllinux_1_2_aarch64.whl", hash = "sha256:6e14899e8db8fc7ab5ef0abc8deacab4bea599e5f0476ccead98be7b32994c24", size = 208014, upload-time = "2026-06-10T04:37:49.871Z" },
+    { url = "https://files.pythonhosted.org/packages/f5/ae/271973793b8fdbb03a345af1158eaa309086eabff61466ddbd1b33a7d93b/crcglot-0.18.0-cp311-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:3f26b06d8b0895e7ec3f335f58a28efc66725b6b3841aecdcb14a323a6fc7177", size = 208229, upload-time = "2026-06-10T04:37:51.029Z" },
+    { url = "https://files.pythonhosted.org/packages/72/6b/43859a62b8b2eacf5614e409cf4ea3b5084db56c8b75b38ae96b4ceab813/crcglot-0.18.0-cp311-abi3-win_amd64.whl", hash = "sha256:579b253129d171cffc4e7cbf6085084c6ea0901243c1d8cae1f80e51a80a2158", size = 192383, upload-time = "2026-06-10T04:37:52.411Z" },
+    { url = "https://files.pythonhosted.org/packages/6d/cd/7d05b8b25868df43fadc10ab610365fcca73c8eac98f34f452f39dbfaf25/crcglot-0.18.0-cp311-abi3-win_arm64.whl", hash = "sha256:f6b6c106635569eeda1a860e75e7578378e7ebad969e0c2395082828a65337d2", size = 191449, upload-time = "2026-06-10T04:37:53.66Z" },
+]
 
 [[package]]
 name = "gitdb"
@@ -712,7 +722,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "crcglot", git = "https://github.com/hucker/crcglot.git?branch=feat%2Fformat-filename" },
+    { name = "crcglot", specifier = ">=0.18,<0.19" },
     { name = "streamlit", specifier = ">=1.57.0" },
     { name = "upstash-redis", specifier = ">=1.4.0" },
 ]
