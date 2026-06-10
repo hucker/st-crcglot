@@ -21,6 +21,12 @@ dev = [
     "ty>=0.0.40",
 ]
 
+# Temporarily pin crcglot to the feat/format_filename branch while
+# wiring the language-aware basename casing.  Revert to main / the
+# registry source once that work lands in a crcglot release.
+[tool.uv.sources]
+crcglot = { git = "https://github.com/hucker/crcglot.git", branch = "feat/format-filename" }
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 # Source modules live under src/, not at the repo root.  Adding src to

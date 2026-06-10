@@ -21,6 +21,7 @@ from crc_lib import (
     CALC_KEY,
     LANGUAGES,
     NAMING_ORDER,
+    RECOVER_KEY,
     REPO_URL,
     REVERSE_KEY,
     SENTINEL_CUSTOM,
@@ -32,11 +33,10 @@ from crc_lib import (
     catalogue_names,
     crc_stream,
     crcglot_version,
-    default_symbol,
+    default_stem,
     detect_chunk,
     encode_int,
-    generate_catalogue,
-    generate_custom,
+    generate_source_files,
     generic_crc,
     git_revision,
     lang_label,
@@ -45,6 +45,7 @@ from crc_lib import (
     padding_pills,
     parse_hex,
     parse_hex_bytes,
+    recover_packets,
     style_info,
     style_label,
     variant_info,
@@ -277,6 +278,47 @@ def render_standard_picker(key_prefix: str) -> tuple[str, AlgorithmInfo, int]:
     return name, entry, entry.width
 
 
+def _is_overridden(current: str | None, auto: str | None) -> bool:
+    """True when an auto-seeded field now holds a hand-typed value.
+
+    A reseed-eligible field (the basename, the custom algorithm name)
+    counts as overridden once it holds a non-empty value that differs
+    from the last value *we* seeded into it -- at which point selection
+    or width changes leave it alone.  An empty field is never an
+    override, so clearing it re-enables auto-seeding.
+    """
+    return bool((current or "").strip()) and current != auto
+
+
+def _auto_check_value(key_prefix: str, seed: AlgorithmInfo) -> str | None:
+    """Compute the test-vector check from the custom form's live params.
+
+    The check value (CRC of ``b"123456789"``) is fully determined by the
+    other parameters, so when Auto-calculate is on we derive it here and
+    show it read-only instead of making the user supply it.  Reads the
+    current widget values from session state (falling back to ``seed`` on
+    first render, before the widgets exist).  Returns the ``0x``-hex
+    string, or ``None`` if any hex field doesn't parse -- in which case
+    that field's own validation error surfaces instead.
+    """
+    w = int(st.session_state.get(f"{key_prefix}_width", seed.width))
+    refin = st.session_state.get(f"{key_prefix}_refin", seed.refin)
+    refout = st.session_state.get(f"{key_prefix}_refout", seed.refout)
+    poly, pe = parse_hex(
+        st.session_state.get(f"{key_prefix}_poly", f"0x{seed.poly:X}"), "Polynomial", w
+    )
+    init, ie = parse_hex(
+        st.session_state.get(f"{key_prefix}_init", f"0x{seed.init:X}"), "Init", w
+    )
+    xorout, xe = parse_hex(
+        st.session_state.get(f"{key_prefix}_xorout", f"0x{seed.xorout:X}"), "Xorout", w
+    )
+    if pe or ie or xe or poly is None or init is None or xorout is None:
+        return None
+    crc = generic_crc(b"123456789", w, poly, init, refin, refout, xorout)
+    return f"0x{crc:0{(w + 3) // 4}X}"
+
+
 def render_multi_standard_picker(
     key_prefix: str,
 ) -> tuple[list[str], AlgorithmInfo | None, list[int]]:
@@ -304,6 +346,38 @@ def render_multi_standard_picker(
     if state_key not in st.session_state:
         st.session_state[state_key] = ["crc32"]
 
+    def _reseed_basename_on_alg_change() -> None:
+        """Re-default the Code Gen basename when the selection changes.
+
+        The default is whatever ``crcglot.default_stem`` derives from the
+        selection -- one algorithm's name for a single pick, a combined
+        stem for a bundle (crcglot owns both, so the app holds no naming
+        rule of its own).  This is the language-independent *stem*; the
+        per-language casing is applied for display by the preview, not
+        baked into the field.  A basename the user typed by hand is
+        preserved -- we only overwrite a value we ourselves last
+        auto-seeded (tracked in ``*_symbol_auto``).
+
+        This lives on the multiselect's ``on_change`` rather than inline
+        in :func:`render_generate_section` because a callback can set the
+        text_input's session-state value as a genuine change
+        notification; an inline set-before-instantiate races the
+        widget's own retained value and can leave the stale bundle stem
+        on screen after dropping back to one algorithm.
+        """
+        raw_sel = st.session_state.get(f"{key_prefix}_alg_multiselect", [])
+        sel = [n for n in catalogue_names if n in set(raw_sel)]
+        if not sel:
+            return
+        new_default = default_stem(sel)
+        sym_key = f"{key_prefix}_symbol"
+        sym_auto_key = f"{key_prefix}_symbol_auto"
+        if not _is_overridden(
+            st.session_state.get(sym_key), st.session_state.get(sym_auto_key)
+        ):
+            st.session_state[sym_key] = new_default
+            st.session_state[sym_auto_key] = new_default
+
     raw = st.multiselect(
         f"CRC algorithm(s) ({len(catalogue_names)} available)",
         catalogue_names,
@@ -311,6 +385,7 @@ def render_multi_standard_picker(
         or ["crc32"],
         format_func=alg_label,
         key=f"{key_prefix}_alg_multiselect",
+        on_change=_reseed_basename_on_alg_change,
         help=(
             f"{len(catalogue_names)} named algorithms from Greg Cook's "
             "[reveng catalogue](https://reveng.sourceforge.io/crc-catalogue/all.htm).  "
@@ -371,9 +446,10 @@ def render_custom_picker(
         - Row 1: Refin checkbox | Width number-input | Polynomial hex |
             Init hex.
         - Row 2: Refout checkbox | Check hex | Xorout hex | (empty cell).
-        - Below: a Description text-input that becomes the
-            :class:`AlgorithmInfo`'s ``name`` (and the function name in
-            generated code).
+        - Below: a "CRC Algorithm Name" text-input (default
+            ``crc<width>_custom``) that becomes the
+            :class:`AlgorithmInfo`'s ``desc`` and seeds the basename in
+            :func:`render_generate_section`.
 
     The form seeds itself from whatever catalog algorithm the user last
     picked on the matching Catalog-side tab (remembered under
@@ -398,12 +474,63 @@ def render_custom_picker(
     if state_key not in st.session_state:
         st.session_state[state_key] = "crc32"
 
+    def _follow_basename(name: str) -> None:
+        """Seed the basename from the custom algorithm name, unless typed over.
+
+        The same name-drives-basename relationship the catalogue side has
+        (where the picked algorithm seeds the stem), so Custom Code Gen
+        mirrors that UI rather than carrying its own static default.
+        """
+        sym_key, sym_auto = f"{key_prefix}_symbol", f"{key_prefix}_symbol_auto"
+        if not _is_overridden(
+            st.session_state.get(sym_key), st.session_state.get(sym_auto)
+        ):
+            base = default_stem(name or "crc_custom")
+            st.session_state[sym_key] = base
+            st.session_state[sym_auto] = base
+
+    def _on_width_change() -> None:
+        """Track the bit-width in the default name (``crc<width>_custom``).
+
+        Matches the catalogue naming style (`crc16`, `crc32`, …) and
+        cascades to the basename, both preserved once hand-edited.
+        """
+        w = int(st.session_state.get(f"{key_prefix}_width", 32))
+        name = f"crc{w}_custom"
+        name_key, name_auto = f"{key_prefix}_desc", f"{key_prefix}_desc_auto"
+        if not _is_overridden(
+            st.session_state.get(name_key), st.session_state.get(name_auto)
+        ):
+            st.session_state[name_key] = name
+            st.session_state[name_auto] = name
+        _follow_basename(st.session_state.get(name_key) or name)
+
+    def _on_name_change() -> None:
+        """User edited the algorithm name -> re-seed the basename to match."""
+        _follow_basename(st.session_state.get(f"{key_prefix}_desc") or "crc_custom")
+
     seed = ALGORITHMS[st.session_state[state_key]]
     st.caption(
         f"Custom parameters — seeded from "
         f"`{st.session_state[state_key]}`. "
         "All hex fields accept `0x...` or bare hex (e.g. `1021`)."
     )
+
+    # Auto-calculate the check value (default on).  Since the test-vector
+    # CRC is fully determined by the other parameters, by default we
+    # compute it live and render Check read-only -- the user never has to
+    # know or type it.  Seed the field's session-state *before* the grid
+    # renders (the value depends on Xorout, which renders after Check), so
+    # the disabled field shows the current value with no one-rerun lag.
+    check_key = f"{key_prefix}_check"
+    auto_check_key = f"{key_prefix}_auto_check"
+    st.session_state.setdefault(check_key, f"0x{seed.check:X}")
+    st.session_state.setdefault(auto_check_key, True)
+    auto_check = st.session_state[auto_check_key]
+    if auto_check:
+        computed = _auto_check_value(key_prefix, seed)
+        if computed is not None:
+            st.session_state[check_key] = computed
 
     # 4-column x 2-row grid so every cell has the same width.
     # Row 1: Refin   | Width | Polynomial | Init
@@ -424,6 +551,7 @@ def render_custom_picker(
                 value=int(seed.width),
                 step=1,
                 key=f"{key_prefix}_width",
+                on_change=_on_width_change,
                 help="CRC register width, 1-64 bits.",
             )
         with r1c3:
@@ -463,13 +591,16 @@ def render_custom_picker(
         with r2c2:
             check_raw = st.text_input(
                 "Check (hex)",
-                value=f"0x{seed.check:X}",
-                key=f"{key_prefix}_check",
+                key=check_key,
+                disabled=auto_check,
                 help=(
                     "**Test-vector check value** — the CRC of the ASCII "
-                    'bytes `"123456789"`.  Used by the generated '
-                    "self-test and (in Code Gen) compared live against "
-                    "what the current parameters actually produce."
+                    'bytes `"123456789"`, baked into the generated '
+                    "`*_self_test()`.\n\n"
+                    "Auto-calculated from the parameters by default "
+                    "(read-only).  Untick **Auto-calculate** to type a "
+                    "known value instead; the computed-vs-typed comparison "
+                    "below then flags a mismatch."
                 ),
             )
         with r2c3:
@@ -487,18 +618,35 @@ def render_custom_picker(
                 ),
             )
         with r2c4:
-            st.markdown(
-                '<div class="crc-grid-empty"></div>',
-                unsafe_allow_html=True,
+            st.checkbox(
+                "Auto-calculate check value",
+                key=auto_check_key,
+                help=(
+                    "**On**: compute **Check** live from the parameters and "
+                    "lock the field — the generated self-test then passes by "
+                    "construction.\n\n"
+                    "**Off**: type a known check value to assert your "
+                    "parameters are correct (a mismatch is flagged below)."
+                ),
             )
 
+    # Seed via session state (not `value=`) so the width/name callbacks can
+    # rewrite the field without Streamlit's default-vs-state conflict; the
+    # *_auto anchor lets the override check tell an auto value from a typed
+    # one.
+    st.session_state.setdefault(f"{key_prefix}_desc", f"crc{int(width)}_custom")
+    st.session_state.setdefault(
+        f"{key_prefix}_desc_auto", st.session_state[f"{key_prefix}_desc"]
+    )
     desc = st.text_input(
-        "Description",
-        value="custom",
+        "CRC Algorithm Name",
         key=f"{key_prefix}_desc",
+        on_change=_on_name_change,
         help=(
-            "**Algorithm name** used in generated code (function names, "
-            "comments).  Hyphens are converted to underscores automatically."
+            "Name for your custom CRC.  Recorded in the generated code's "
+            "description/comments and used to seed the **basename** below "
+            "(the same way a catalogue pick seeds it).  Defaults to "
+            "`crc<width>_custom` to match the catalogue naming style."
         ),
     )
 
@@ -540,23 +688,29 @@ def render_custom_picker(
 def render_test_vector_display(
     entry: AlgorithmInfo | None,
     is_custom: bool,
+    auto_check: bool = False,
 ) -> None:
     """Render an inline pill showing the algorithm's CRC of ``b"123456789"``.
 
     Used by the Code Gen tabs as an informational signal -- no button
     click needed.  For catalog entries the computed value equals
     ``entry.check`` by construction; for custom entries it's computed
-    live from the user's current parameters and compared to the typed
-    ``check`` field, with a ✓ / ✗ badge.  This catches the "your params
-    don't actually produce the check value you typed" case before the
-    user generates code with a broken self-test.
+    live from the user's current parameters.  When the user is supplying
+    the ``check`` field by hand (``auto_check`` False) the computed value
+    is compared to it with a ✓ / ✗ badge, catching the "your params don't
+    actually produce the check value you typed" case before the user
+    generates code with a broken self-test.  When the check is
+    auto-calculated they always agree, so the comparison is dropped.
 
     Args:
         entry: The :class:`AlgorithmInfo` to evaluate.  ``None`` means the
             custom form has validation errors; the function renders nothing
             in that case so it stays quiet until the user fixes things.
-        is_custom: When True, renders the verify badge against
-            ``entry.check``.  When False, just shows the computed CRC.
+        is_custom: When True, computes the CRC live from ``entry``'s
+            parameters.  When False, just shows the published ``entry.check``.
+        auto_check: When True (custom only), the Check field is being
+            auto-calculated, so the value shown *is* the check -- the badge
+            says "auto-calculated" instead of comparing to a typed value.
     """
     if entry is None:
         return
@@ -592,30 +746,48 @@ def render_test_vector_display(
                     "your custom parameters."
                 ),
             )
-            if ok:
+            if auto_check:
+                st.badge(
+                    "auto-calculated",
+                    color="green",
+                    icon=":material/bolt:",
+                    help=(
+                        "This value is the **Check** field — derived from "
+                        "your parameters, so the generated `*_self_test()` "
+                        "passes by construction."
+                    ),
+                )
+            elif ok:
                 st.badge(
                     "matches Check",
                     color="green",
                     icon=":material/check:",
-                    help=f"Equals the **Check** value you typed: `{expected}`.",
+                    help=f"Equals the **Check** value you entered: `{expected}`.",
                 )
             else:
                 st.badge(
-                    "mismatch with typed Check",
+                    "mismatch with Check",
                     color="red",
                     icon=":material/close:",
                     help=(
-                        f"Differs from the **Check** value you typed: "
+                        f"Differs from the **Check** value you entered: "
                         f"`{expected}`.  Either the parameters or the "
                         f"Check field needs adjusting."
                     ),
                 )
-        st.caption(
-            "Computed live from your parameters by `crcglot`.  The ✓/✗ "
-            "badge compares it to the **Check** value you typed; if it "
-            "matches now, the `*_self_test()` function baked into the "
-            "generated code will pass after compilation."
-        )
+        if auto_check:
+            st.caption(
+                "Computed live from your parameters by `crcglot` and used "
+                "as the **Check** value baked into the generated "
+                "`*_self_test()`."
+            )
+        else:
+            st.caption(
+                "Computed live from your parameters by `crcglot`.  The ✓/✗ "
+                "badge compares it to the **Check** value you entered; if it "
+                "matches now, the `*_self_test()` function baked into the "
+                "generated code will pass after compilation."
+            )
     else:
         st.badge(
             f"Test vector CRC: {formatted}",
@@ -640,120 +812,6 @@ def render_test_vector_display(
 
 
 # ---------- Action sections (shared by tab bodies) ----------
-
-
-# Per-target stdlib (or canonical-package) drop-in for IEEE CRC-32.  Used
-# by `_generation_advice` to surface the faster path when the user picks
-# `crc32` -- catalogue-derived algorithm name `crc32` is the only entry
-# where every modern language has a hardware-accelerated equivalent.
-# Verilog / VHDL omitted: HDL has no "stdlib"; the emitted RTL is the
-# implementation.
-_CRC32_STDLIB_HINT: dict[str, str] = {
-    "c": "`<zlib.h>`'s `crc32(0, buf, len)`",
-    "csharp": "`System.IO.Hashing.Crc32` (.NET 6+)",
-    "go": "`hash/crc32` stdlib: `crc32.ChecksumIEEE(buf)`",
-    "java": "`java.util.zip.CRC32` stdlib",
-    "python": "`zlib.crc32(data)` stdlib",
-    "rust": "the `crc32fast` crate: `crc32fast::hash(buf)`",
-    "typescript": "the `crc-32` npm package: `CRC32.buf(buf)`",
-}
-
-
-def _generation_advice(lang: str, names: list[str]) -> list[tuple[str, str]]:
-    """Per-target informational notes about faster alternatives.
-
-    Returns a list of ``(severity, markdown)`` tuples rendered above
-    the symbol input.  ``severity`` is ``"warning"`` (yellow
-    :func:`st.warning`) or ``"info"`` (blue :func:`st.info`).  Empty
-    list when the emitted code is already the canonical answer (HDL
-    targets, custom CRCs, anything that isn't ``crc32`` on a compiled
-    target).
-
-    Two mutually exclusive triggers:
-
-    - **Python target** (any algorithm, ``"warning"`` severity): the
-      emitted Python is interpreted pure-Python, much slower than
-      crcglot's own runtime (which dispatches to a C extension and,
-      for IEEE CRC-32, ``zlib.crc32`` with CPU CRC instructions --
-      roughly 20× faster than the emitted code).  The warning frames
-      the emitted code as the porting-target answer rather than the
-      first choice.
-
-    - **IEEE CRC-32 on a compiled target** (``"info"`` severity): the
-      language has a stdlib or canonical-package CRC-32 implementation
-      using CPU hardware CRC instructions.  The emitted code is fine
-      for typical message sizes, but for large files or streaming
-      throughput the library path is faster.  Triggers if ``crc32`` is
-      anywhere in the selection (bundles benefit because at least one
-      algorithm has the fast path; the other bundled algorithms still
-      need the emitted code since stdlib doesn't carry CRC-16/MODBUS
-      etc.).
-
-    Custom mode never triggers either note: we can't statically tell
-    whether the user's parameters are CRC-32-equivalent, and "use
-    crcglot directly" doesn't help when the algorithm isn't catalogued.
-
-    Args:
-        lang: crcglot language code.
-        names: Selected algorithm names.
-
-    Returns:
-        Zero or one ``(severity, markdown)`` tuple.
-    """
-    notes: list[tuple[str, str]] = []
-
-    has_crc32 = "crc32" in names
-
-    if lang == "python":
-        # Python target -> warn that crcglot package itself is faster.
-        # Fold in the crc32-specific 20× figure when crc32 is in the
-        # selection; otherwise generalize to "close to C speed for any
-        # catalogue algorithm."
-        if has_crc32:
-            python_msg = (
-                "**For Python use cases, prefer the `crcglot` package "
-                "itself.**  `pip install crcglot` and call "
-                "`crcglot.encode_int(data, 'crc32')` -- it dispatches "
-                "to `zlib.crc32` (CPU CRC instructions), **~20× faster** "
-                "than the emitted pure-Python code.  Generate the code "
-                "below if you need a self-contained Python file (no "
-                "crcglot install on the target, locked-down environment, "
-                "etc.)."
-            )
-        else:
-            head = ", ".join(f"`'{n}'`" for n in names[:3])
-            tail = "" if len(names) <= 3 else f" (+{len(names) - 3} more)"
-            python_msg = (
-                "**For Python use cases, prefer the `crcglot` package "
-                "itself.**  `pip install crcglot` and call "
-                f"`crcglot.encode_int(data, name)` with name = {head}"
-                f"{tail} -- it uses the fastest available implementation, "
-                "**close to C speed** for any catalogue algorithm. "
-                "Generate the code below if you need a self-contained "
-                "Python file (no crcglot install on the target, "
-                "locked-down environment, etc.)."
-            )
-        notes.append(("warning", python_msg))
-
-    elif has_crc32 and lang in _CRC32_STDLIB_HINT:
-        # Compiled target + crc32: emitted code is fine for typical
-        # message sizes, but a library path is faster for large data /
-        # streaming.  Soft info note, not a warning -- the emitted code
-        # is still correct, just not optimal for high-throughput cases.
-        notes.append(
-            (
-                "info",
-                f"**Faster CRC-32 path available in "
-                f"{LANGUAGES[lang].display_name}**: "
-                f"{_CRC32_STDLIB_HINT[lang]}.  The code below is fine for "
-                "small messages, but for large files or streaming "
-                "throughput consider that library -- it typically uses "
-                "CPU CRC instructions when the target processor supports "
-                "them.",
-            )
-        )
-
-    return notes
 
 
 def _build_symbol_preview(
@@ -786,19 +844,29 @@ def _build_symbol_preview(
     s = symbol.strip()
     if not s:
         return "_Type a name above to preview what the generator will produce._"
-    extensions = LANGUAGES[lang].extensions
-    files_md = " + ".join(f"`{s}{ext}`" for ext in extensions)
+    # crcglot owns the per-language casing, so we render the *actual*
+    # names it will emit by passing the stem through format_filename /
+    # format_name rather than guessing -- e.g. Java/C# PascalCase the
+    # file (`crc_bundle` -> `CrcBundle`) and camelCase identifiers.  The
+    # field itself stays a raw stem; this line is where the casing shows.
+    info = LANGUAGES[lang]
+    filename = info.format_filename(s)
+    files_md = " + ".join(f"`{filename}{ext}`" for ext in info.extensions)
     if is_bundle:
-        # Bundle: each algorithm keeps its catalog name (with hyphens
-        # converted to underscores, same rule the generator follows).
-        # Truncate the list at 3 to keep the line short on big bundles.
-        head_funcs = [f"`{default_symbol(n)}(...)`" for n in names[:3]]
+        # Bundle: each algorithm keeps its own catalogue-derived function
+        # name inside the one file, cast to the target's identifier
+        # convention.  Truncate at 3 to keep the line short on big bundles.
+        head_funcs = [
+            f"`{info.format_name(default_stem(n), kind='identifier')}`"
+            for n in names[:3]
+        ]
         suffix = "" if len(names) <= 3 else f", …  ({len(names)} total)"
         return (
-            f"**Will produce:** {files_md} — functions: {', '.join(head_funcs)}{suffix}"
+            f"**Will produce:** ~{files_md} — one file bundling "
+            f"{', '.join(head_funcs)}{suffix}."
         )
-    # Single-algo (catalog or custom): the symbol IS the function name.
-    return f"**Will produce:** {files_md} — function `{s}(...)`"
+    # Single-algo (catalog or custom): the symbol drives the function name.
+    return f"**Will produce:** ~{files_md} — a function named from `{s}`."
 
 
 def render_generate_section(
@@ -937,48 +1005,75 @@ def render_generate_section(
     )
     st.caption(naming_info(naming).description)
 
-    # Surface faster-alternative notes when applicable: Python target
-    # (use crcglot package directly -- warning severity), or IEEE
-    # crc32 on a compiled target (stdlib has hardware-accelerated
-    # CRC -- info severity).  See `_generation_advice` for triggers.
-    # Custom mode never triggers either note.
-    if not is_custom:
-        for severity, note in _generation_advice(lang, names):
-            if severity == "warning":
-                st.warning(note)
+    # Advisories about faster-alternative paths come from crcglot itself
+    # via LanguageInfo.advisories_for -- the "which language has a
+    # hardware-accelerated stdlib for CRC-32" knowledge is library data,
+    # not UI data, so we just consume Advisory objects and translate the
+    # severity to a Streamlit affordance.  Custom mode also benefits:
+    # advisories_for accepts AlgorithmInfo, so a user-typed CRC whose
+    # parameters happen to equal IEEE crc32 still surfaces the
+    # stdlib-crc32 advisory (the old name-based check missed this).
+    if not (is_custom and entry is None):
+        advisory_targets: list = [entry] if is_custom else list(names)
+        for adv in LANGUAGES[lang].advisories_for(advisory_targets):
+            if adv.severity == "warning":
+                st.warning(adv.message)
             else:
-                st.info(note)
+                st.info(adv.message)
 
     sym_col, btn_col = st.columns([3, 1], vertical_alignment="bottom")
+    # Raw, language-independent stem; crcglot owns the derivation (single
+    # name vs combined bundle stem) and the per-language casing is applied
+    # downstream for display and at generation.  Custom mode seeds from
+    # the user's "CRC Algorithm Name" so the basename mirrors it, exactly
+    # as a catalogue pick seeds the stem from the algorithm name.
     if is_custom:
-        default_sym = "custom_crc"
-    elif is_bundle:
-        default_sym = "crc_bundle"  # neutral bundle stem; user can override
+        custom_name = st.session_state.get(f"{key_prefix}_desc") or "crc_custom"
+        default_sym = default_stem(custom_name)
     else:
-        default_sym = default_symbol(first_name)
+        default_sym = default_stem(names)
 
     sym_key = f"{key_prefix}_symbol"
-    sym_for_key = f"{key_prefix}_symbol_for"
-    # Reseed the symbol field when the selection changes.  For a bundle
-    # use the tuple of names so adding/removing one algorithm re-triggers
-    # the seed (otherwise the old single-algo default would stick).
-    sym_for_value = tuple(names) if is_bundle else first_name
-    if st.session_state.get(sym_for_key) != sym_for_value:
+    sym_auto_key = f"{key_prefix}_symbol_auto"
+    # First-render seed only.  Subsequent selection changes are handled
+    # by the multiselect's on_change callback
+    # (_reseed_basename_on_alg_change) -- in catalog mode -- so the field
+    # updates as a change notification rather than an inline
+    # set-before-instantiate.  Custom mode has no multiselect, so its
+    # default ("custom_crc") seeds here and never needs to track a
+    # selection.
+    if sym_key not in st.session_state:
         st.session_state[sym_key] = default_sym
-        st.session_state[sym_for_key] = sym_for_value
+        st.session_state[sym_auto_key] = default_sym
 
     with sym_col:
+        # Shared guidance: the field is a language-independent *stem*;
+        # crcglot re-cases it per target (PascalCase files/classes for
+        # Java & C#, camelCase identifiers, snake_case elsewhere).
+        # Recommending snake_case is the safe input: it round-trips
+        # cleanly into every target's convention, whereas a value that's
+        # already cased one way can translate oddly (e.g. `MyCrc` ->
+        # Java class `Mycrc`).  The live "Will produce" line shows the
+        # exact names for the current language.
+        snake_tip = (
+            "Write it in **snake_case** (e.g. `crc_bundle`) — that "
+            "translates reliably into every target's naming "
+            "convention.  See the **Will produce** line for the exact "
+            "names crcglot will emit for the selected language."
+        )
         if is_bundle:
             sym_label = "File basename"
             sym_help = (
-                "File stem for the bundled output (and, in Java, the "
-                "container class name).  Each algorithm keeps its own "
-                "catalogue-derived function names inside the file."
+                "Stem for the one bundled file (and, for Java & C#, the "
+                "container class).  Each algorithm keeps its own "
+                "catalogue-derived function name inside the file.  "
+                f"{snake_tip}"
             )
         else:
             sym_label = "Function / file basename"
             sym_help = (
-                "Used as the generated function name; for C, also the .c / .h basename."
+                "Stem for the generated function name (and, for C, the "
+                f".c / .h filename).  {snake_tip}"
             )
         symbol = st.text_input(sym_label, key=sym_key, help=sym_help)
     with btn_col:
@@ -1006,31 +1101,29 @@ def render_generate_section(
                 # returned a valid AlgorithmInfo.  Asserting narrows
                 # the type for the static checker.
                 assert entry is not None
-                result = generate_custom(
+                files = generate_source_files(
                     lang,
-                    symbol.strip(),
-                    entry,
-                    variant,
-                    symbol.strip(),
+                    entry=entry,
+                    variant=variant,
+                    symbol=symbol.strip(),
                     comment_style=comment_style,
                     naming=naming,
                 )
             else:
-                # Catalog mode: pass the list -- generate_catalogue
-                # picks the single-algo path or routes through the
-                # language's combiner based on len(names).
-                result = generate_catalogue(
+                # Catalog mode: pass the list -- generate_source_files
+                # routes single-algo vs bundle internally via crcglot.
+                files = generate_source_files(
                     lang,
-                    names,
-                    variant,
-                    symbol.strip(),
+                    names=names,
+                    variant=variant,
+                    symbol=symbol.strip(),
                     comment_style=comment_style,
                     naming=naming,
                 )
         except ValueError as e:
             st.error(str(e))
             st.stop()
-        if result is None:
+        if not files:
             label = first_name if not is_bundle else ", ".join(names)
             st.error(f"Generator returned no output for {label!r}.")
             st.stop()
@@ -1038,29 +1131,34 @@ def render_generate_section(
 
         with st.container(border=True):
             st.subheader(f"View {LANGUAGES[lang].display_name} Output")
-            extensions = LANGUAGES[lang].extensions
-            files = result if isinstance(result, tuple) else (result,)
-            cols = (
-                st.columns(len(extensions))
-                if len(extensions) > 1
-                else (st.container(),)
-            )
-            for col, ext, content in zip(cols, extensions, files):
+            # crcglot owns the filename and the file's role (e.g. C's
+            # header vs source) -- we render what it hands back rather
+            # than reconstructing `{symbol}{ext}` ourselves.
+            cols = st.columns(len(files)) if len(files) > 1 else (st.container(),)
+            for col, gf in zip(cols, files):
                 with col:
-                    fname = f"{symbol}{ext}"
+                    role = f" · {gf.role}" if gf.role else ""
                     st.markdown(
-                        f"**\U0001f4c4 `{fname}`**  ·  *{len(content):,} bytes*"
+                        f"**\U0001f4c4 `{gf.filename}`**{role}  ·  "
+                        f"*{len(gf.content):,} bytes*"
                     )
-                    st.code(content, language=lang, line_numbers=True)
+                    st.code(gf.content, language=lang, line_numbers=True)
                     st.download_button(
-                        f"Download {ext}",
-                        content,
-                        file_name=fname,
+                        f"Download {gf.filename}",
+                        gf.content,
+                        file_name=gf.filename,
                         mime="text/plain",
                         use_container_width=True,
                         icon=":material/download:",
-                        key=f"{key_prefix}_dl_{ext}",
+                        key=f"{key_prefix}_dl_{gf.filename}",
                     )
+
+
+# Calc results show a copyable "frame" (payload + trailing CRC) so the user
+# can paste it straight into the Recover Custom tab and confirm the CRC
+# parameters round-trip.  Capped so a large input can't dump a huge hex
+# string into the result panel.
+FRAME_PREVIEW_MAX_BYTES = 256
 
 
 def render_calculate_section(
@@ -1207,10 +1305,7 @@ def render_calculate_section(
 
     _, btn_col = st.columns([3, 1], vertical_alignment="bottom")
     with btn_col:
-        button_disabled = (
-            uploaded is None if input_mode == "File"
-            else not text.strip()
-        )
+        button_disabled = uploaded is None if input_mode == "File" else not text.strip()
         # Button label reflects what's actually about to happen: only say
         # "Verify" when verification is on (allow_verify AND test-vector
         # checkbox is checked).
@@ -1232,6 +1327,10 @@ def render_calculate_section(
     # Hex-dump interpretation needs the whole text in memory before
     # parsing anyway (hex chars span chunk boundaries), so that branch
     # stays single-shot, as do Text and Hex (textarea) modes.
+    # `data` holds the payload bytes on non-streaming paths; it stays None
+    # when streaming (we never buffer the whole file), which the frame
+    # preview below uses to know it must skip.
+    data: bytes | None = None
     streaming = input_mode == "File" and file_interp == "Raw bytes"
 
     if streaming:
@@ -1337,6 +1436,30 @@ def render_calculate_section(
                 "catalog's published **check** value — the canonical "
                 "answer from Greg Cook's "
                 "[reveng catalogue](https://reveng.sourceforge.io/crc-catalogue/all.htm)."
+            )
+
+        # Round-trip frame: payload + big-endian CRC as one hex string --
+        # exactly the shape the Recover Custom tab consumes.  Paste it there
+        # to confirm the CRC parameters come back out.  `data is None` means
+        # the streaming path (large file) ran, so there's nothing buffered to
+        # show; the byte cap keeps a big input from flooding the panel.
+        if data is not None and len(data) <= FRAME_PREVIEW_MAX_BYTES:
+            crc_byte_count = (entry.width + 7) // 8
+            frame_hex = (data + value.to_bytes(crc_byte_count, "big")).hex(" ")
+            st.markdown("**\U0001f9e9 Frame (payload + CRC)**")
+            st.code(frame_hex, language=None)
+            st.caption(
+                f"Payload + the {entry.width}-bit CRC appended **big-endian** "
+                f"({crc_byte_count} byte{'' if crc_byte_count == 1 else 's'}).  "
+                "Paste into **Recover Custom** (CRC width "
+                f"{crc_byte_count * 8}-bit, byte order Big).  Collect a few "
+                "frames from different payloads — one alone is often "
+                "underdetermined."
+            )
+        elif data is not None:
+            st.caption(
+                f"*Frame preview omitted — input is {len(data):,} bytes "
+                f"(shown for inputs ≤ {FRAME_PREVIEW_MAX_BYTES} bytes).*"
             )
 
 
@@ -1527,7 +1650,12 @@ def render_gen_tab(picker_kind: str, key_prefix: str, is_custom: bool) -> None:
         # catalog check value -- showing one would mislead, listing them
         # all would dominate the viewport, so we collapse to a caption.
         if is_custom or len(names) == 1:
-            render_test_vector_display(entry, is_custom=is_custom)
+            render_test_vector_display(
+                entry,
+                is_custom=is_custom,
+                auto_check=is_custom
+                and st.session_state.get(f"{key_prefix}_auto_check", True),
+            )
         else:
             st.caption(
                 f"Bundling **{len(names)}** algorithms — each carries "
@@ -1576,7 +1704,7 @@ def render_reverse_tab() -> None:
     rev_target_raw = ""
 
     with st.container(border=True):
-        st.subheader("Reverse Lookup")
+        st.subheader("Identify")
         st.caption(
             f"Have a captured payload and its trailing CRC but don't know "
             f"which algorithm produced it?  Paste both below and the "
@@ -1681,7 +1809,7 @@ def render_reverse_tab() -> None:
         _, rev_btn_col = st.columns([3, 1], vertical_alignment="bottom")
         with rev_btn_col:
             rev_go = st.button(
-                "Reverse Lookup",
+                "Identify",
                 type="primary",
                 disabled=(
                     not rev_text.strip()
@@ -1829,15 +1957,266 @@ def render_reverse_tab() -> None:
             )
 
 
+def render_recover_tab() -> None:
+    """Render the body of the Recover Custom CRC tab.
+
+    Reverse-engineers an *unknown / custom* CRC from one or more sample
+    frames, delegating the entire parameter search to
+    :func:`crc_lib.recover_packets` (a thin wrapper over
+    ``crcglot.reverse_packets``).  This is the counterpart to the
+    Identify tab: Identify *matches* a known catalogue algorithm; this
+    tab *recovers* arbitrary ``poly`` / ``init`` / ``refin`` /
+    ``refout`` / ``xorout`` parameters that need not be catalogued.
+
+    The layout is deliberately fixed -- no control shows or hides
+    another section as it changes.  The "underdetermined -- add another
+    frame" loop is served by the result message updating below a form
+    that stays put, not by rearranging the inputs.
+
+    On a successful click, bumps :data:`RECOVER_KEY`.
+    """
+    rec_go = False
+    rec_text = ""
+
+    with st.container(border=True):
+        st.subheader("Recover a Custom CRC")
+        st.caption(
+            "Captured whole frames (payload + trailing CRC) from a device or "
+            "protocol whose CRC *isn't* a catalogue algorithm?  Paste them "
+            "below -- one hex frame per line -- and crcglot's "
+            "`reverse_packets()` solves for the parameters "
+            "(`poly` / `init` / `refin` / `refout` / `xorout`).  "
+            "**Favor several frames of the *same* length** — that's what pins "
+            "the polynomial — and include **at least two different lengths** so "
+            "`init` and `xorout` can be separated.  Frames that are *all* "
+            "different lengths usually can't be solved."
+        )
+
+        rec_text = st.text_area(
+            "Sample frames — one hex frame per line (payload + trailing CRC)",
+            height=140,
+            placeholder=(
+                "de ad be ef 1d 0f\nca fe ba be 7c a1\n0x01,0x02,0x03,0x04,0x9b,0x22"
+            ),
+            help=(
+                "Each line is one captured frame: payload followed by its "
+                "trailing CRC bytes.  `0x` prefixes, `:` / `,` separators "
+                "and whitespace are stripped before decoding.\n\n"
+                "**Frame shape matters more than count.**  Give a few frames "
+                "of the *same* length (varying the *content*, not just "
+                "appending bytes), plus a second group at a different length.  "
+                "4–6 frames across two lengths is usually plenty; frames that "
+                "are each a different length can't pin the polynomial."
+            ),
+            key="rec_frames",
+        )
+
+        width_col, order_col = st.columns(2, vertical_alignment="bottom")
+        with width_col:
+            rec_width_label = (
+                st.segmented_control(
+                    "CRC width",
+                    ["All", "8", "16", "32", "64"],
+                    default="All",
+                    format_func=lambda s: "All widths" if s == "All" else f"{s}-bit",
+                    key="rec_crc_bytes",
+                    help=(
+                        "How many trailing bytes of each frame are the CRC "
+                        "field.  **All widths** lets crcglot search every "
+                        "width -- the right default when you don't already "
+                        "know the CRC size; narrow it only to speed things "
+                        "up or break a tie."
+                    ),
+                )
+                or "All"
+            )
+        # "All" -> None (crcglot searches every width); a bit-width label maps
+        # to its trailing byte count for the crc_bytes filter.
+        bits_to_bytes = {"8": 1, "16": 2, "32": 4, "64": 8}
+        rec_crc_bytes = bits_to_bytes.get(rec_width_label)
+        with order_col:
+            rec_order_label = (
+                st.segmented_control(
+                    "CRC byte order",
+                    ["Big", "Little", "Both"],
+                    default="Big",
+                    key="rec_order",
+                    # A 1-byte CRC has no byte order, so this is moot at 8-bit.
+                    disabled=rec_width_label == "8",
+                    help=(
+                        "How the trailing CRC bytes are ordered on the wire.  "
+                        "Example for a 2-byte CRC value `0xAABB`:\n\n"
+                        "- **Big** — bytes are `AA BB` (most-significant first; "
+                        "this is 'network order' and by far the most common).\n"
+                        "- **Little** — bytes are `BB AA` (least-significant "
+                        "first; byte-reversed).\n"
+                        "- **Both** — try each ordering and report which hit.\n\n"
+                        "An 8-bit (1-byte) CRC has no byte order, so this "
+                        "control is disabled when CRC width is 8-bit."
+                    ),
+                )
+                or "Big"
+            )
+        # Map the display label to crcglot's lowercase literal in branches so
+        # the type narrows to the Literal reverse_packets expects.
+        if rec_order_label == "Little":
+            rec_order = "little"
+        elif rec_order_label == "Both":
+            rec_order = "both"
+        else:
+            rec_order = "big"
+
+        rec_std_only = st.checkbox(
+            "Restrict to catalogue algorithms only",
+            value=False,
+            key="rec_std_only",
+            help=(
+                "Off (default): solve for fully custom parameters -- the point "
+                "of this tab.  On: only accept a solution that is a known "
+                "catalogue algorithm (the **Identify** tab is simpler if "
+                "that's all you need)."
+            ),
+        )
+
+        _, rec_btn_col = st.columns([3, 1], vertical_alignment="bottom")
+        with rec_btn_col:
+            rec_go = st.button(
+                "Recover CRC",
+                type="primary",
+                disabled=not rec_text.strip(),
+                use_container_width=True,
+                icon=":material/extension:",
+            )
+
+    if not rec_go:
+        return
+
+    # Delegate the whole search to crcglot; we only surface its result.
+    try:
+        result = recover_packets(
+            rec_text,
+            crc_bytes=rec_crc_bytes,
+            crc_byte_order=rec_order,
+            std_algo_only=rec_std_only,
+        )
+    except ValueError as e:
+        st.error(f"Sample frames: {e}")
+        st.stop()
+
+    bump_stats(RECOVER_KEY)
+
+    with st.container(border=True):
+        st.subheader("Recovered Parameters")
+
+        if not result.candidates:
+            width_hint = (
+                "all widths were searched, so the size isn't the issue"
+                if rec_crc_bytes is None
+                else f"is the trailing field really {rec_crc_bytes * 8}-bit?"
+            )
+            st.warning(
+                f"{result.note}\n\n"
+                "No CRC parameters fit every frame.  Things to check:\n"
+                f"- **CRC width** — {width_hint}\n"
+                "- **Byte order** — try **Both** if you're unsure.\n"
+                "- **Frame boundaries** — each line must be exactly payload + "
+                "CRC, with no extra header/trailer bytes.\n"
+                "- Add **more frames** — one short frame rarely pins a CRC down."
+            )
+            return
+
+        ambiguous = result.ambiguity_bits > 0 or len(result.candidates) > 1
+        if ambiguous:
+            st.warning(
+                f"**Underdetermined.**  {result.note}  "
+                "Add another sample frame to narrow it down."
+            )
+        else:
+            st.success(result.note or "Recovered a unique parameter set.")
+
+        # `validated_frames` is a hold-out cross-check, not a frame count:
+        # crcglot re-solves from all-but-one frame and tests whether the model
+        # predicts the one it held back (1 = yes, 0 = no, -1 = didn't run with
+        # <4 frames).  A 0 already appends a WARNING to `note` above, so we
+        # only add the positive confirmation here.
+        if result.validated_frames >= 1:
+            n_frames = sum(1 for line in rec_text.splitlines() if line.strip())
+            st.caption(
+                f"✓ Cross-checked — re-solved from {n_frames - 1} of your "
+                f"{n_frames} frames and correctly predicted the held-out one "
+                "(empirical confidence the model generalises, not just fits "
+                "the frames it was given)."
+            )
+
+        if result.catalogue_name:
+            st.info(
+                f"These parameters match the known algorithm "
+                f"**{result.catalogue_name}** — the \U0001f50d **Identify** "
+                "tab confirms catalogue matches directly."
+            )
+
+        for info in result.candidates:
+            # Anchor badge then a horizontal row of the recovered parameter
+            # pills.  The headline must NOT masquerade as a catalogue match:
+            # a green check + a "crcNN"-style name reads as "this is the
+            # standard crcNN", which is wrong for a recovered custom poly.
+            # So green check + catalogue name ONLY when crcglot actually
+            # matched the catalogue; otherwise a distinct "custom" badge.
+            if result.catalogue_name:
+                st.badge(
+                    result.catalogue_name,
+                    color="green",
+                    icon=":material/check:",
+                    help="The recovered parameters match this catalogue algorithm.",
+                )
+            else:
+                st.badge(
+                    f"Custom {info.width}-bit CRC",
+                    color="violet",
+                    icon=":material/build:",
+                    help=(
+                        "A custom CRC — these parameters reproduce your frames "
+                        "but don't match any catalogue algorithm."
+                    ),
+                )
+            with st.container(horizontal=True, gap="small"):
+                st.badge(
+                    f"Width: {info.width}", color="gray", help="CRC width in bits."
+                )
+                st.badge(
+                    f"Poly: 0x{info.poly:X}",
+                    color="gray",
+                    help="Generator polynomial.",
+                )
+                st.badge(
+                    f"Init: 0x{info.init:X}",
+                    color="gray",
+                    help="Initial register value.",
+                )
+                st.badge(
+                    f"RefIn: {info.refin}", color="gray", help="Reflect input bytes."
+                )
+                st.badge(
+                    f"RefOut: {info.refout}",
+                    color="gray",
+                    help="Reflect output CRC.",
+                )
+                st.badge(
+                    f"XorOut: 0x{info.xorout:X}", color="gray", help="Final XOR mask."
+                )
+            if info.desc:
+                st.caption(info.desc)
+
+
 def render_footer() -> None:
     """Render the page footer: stats counters + build info.
 
     Two stacked rows:
-        1. Counter totals line: ``"N generations · M calculations · K searches"``
-           in orange.
+        1. Counter totals line: ``"N generations · M calculations · K
+           searches · J recoveries"`` in orange.
         2. Pill row: one pill per crcglot language (per-language generation
-           count) plus a 🧮 Calculate pill and a 🔍 Reverse pill.  Zero-count
-           pills are dimmed.
+           count) plus a 🧮 Calculate pill, a 🔍 Identify pill, and a 🧩
+           Recover pill.  Zero-count pills are dimmed.
 
     Below that, a small monospace build line: app version + git rev (linked
     to the GitHub commit) + crcglot version (linked to PyPI).
@@ -1847,11 +2226,13 @@ def render_footer() -> None:
     gen_total = sum(v for k, v in stats.items() if not k.startswith("__"))
     calc_total = stats.get(CALC_KEY, 0)
     rev_total = stats.get(REVERSE_KEY, 0)
+    rec_total = stats.get(RECOVER_KEY, 0)
 
     st.caption(
         f"**{gen_total} generation{'' if gen_total == 1 else 's'}**"
         f" · **{calc_total} calculation{'' if calc_total == 1 else 's'}**"
         f" · **{rev_total} search{'' if rev_total == 1 else 'es'}**"
+        f" · **{rec_total} recover{'y' if rec_total == 1 else 'ies'}**"
     )
     with st.container(horizontal=True, gap="small"):
         for code, info in LANGUAGES.items():
@@ -1870,9 +2251,14 @@ def render_footer() -> None:
             help="Number of times someone clicked **Calculate** in either Calc tab.",
         )
         st.badge(
-            f"\U0001f50d Reverse: {rev_total}",
+            f"\U0001f50d Identify: {rev_total}",
             color="gray",
-            help="Number of times someone clicked **Reverse Lookup**.",
+            help="Number of times someone clicked **Identify** (catalogue match).",
+        )
+        st.badge(
+            f"\U0001f9e9 Recover: {rec_total}",
+            color="gray",
+            help="Number of times someone clicked **Recover CRC** (custom reverse-engineer).",
         )
 
     rev = git_revision()

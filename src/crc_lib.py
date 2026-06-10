@@ -22,13 +22,18 @@ from crcglot import (
     ALGORITHMS,
     AlgorithmInfo,
     CrcStream,  # noqa: F401  -- re-exported through ui.py
+    GeneratedFile,
     LANGUAGES,
     NAMING_ORDER,  # noqa: F401  -- re-exported through ui.py
+    ReverseResult,
     crc_stream,  # noqa: F401  -- re-exported through ui.py
+    default_stem,  # noqa: F401  -- re-exported through ui.py
     detect,
     encode_int,
+    generate_files,
     generic_crc,
     naming_info,  # noqa: F401  -- re-exported through ui.py
+    reverse_packets,
     variant_info,
 )
 from crcglot.comments import style_info
@@ -52,22 +57,25 @@ __all__ = [
     "STATS_FILE",
     "CALC_KEY",
     "REVERSE_KEY",
+    "RECOVER_KEY",
     "SENTINEL_CUSTOM",
     "VARIANT_ICONS",
+    "GeneratedFile",
+    "ReverseResult",
     "catalogue_names",
     "encode_int",
     "generic_crc",
     "parse_hex",
     "parse_hex_bytes",
     "detect_chunk",
+    "recover_packets",
     "padding_pills",
     "variant_info",
     "style_info",
     "available_variants",
     "available_variants_bundle",
-    "generate_catalogue",
-    "generate_custom",
-    "default_symbol",
+    "generate_source_files",
+    "default_stem",
     "alg_label",
     "lang_label",
     "variant_label",
@@ -90,7 +98,8 @@ REPO_URL = "https://github.com/hucker/st-crcglot"
 APP_ROOT = Path(__file__).resolve().parent.parent
 STATS_FILE = APP_ROOT / "crcglot_stats.json"
 CALC_KEY = "__calculate__"  # not a language code -- excluded from per-lang pills.
-REVERSE_KEY = "__reverse__"  # ditto -- reverse-lookup tab counter.
+REVERSE_KEY = "__reverse__"  # ditto -- Identify (catalogue-match) tab counter.
+RECOVER_KEY = "__recover__"  # ditto -- Recover Custom (reverse-engineer) tab counter.
 SENTINEL_CUSTOM = "__custom__"  # passed as `name` when generating from custom params.
 
 # Icons are app-side aesthetic, not part of crcglot's variant model;
@@ -224,7 +233,7 @@ _REDIS_PREFIX = "crc101:"
 def _all_counter_keys() -> list[str]:
     """The set of counter keys the footer reads -- per-language plus the
     two sentinel keys."""
-    return list(LANGUAGES) + [CALC_KEY, REVERSE_KEY]
+    return list(LANGUAGES) + [CALC_KEY, REVERSE_KEY, RECOVER_KEY]
 
 
 def _load_stats_local() -> dict[str, int]:
@@ -423,6 +432,63 @@ def detect_chunk(
     ]
 
 
+def recover_packets(
+    frames_text: str,
+    *,
+    crc_bytes: int | None = None,
+    crc_byte_order: Literal["big", "little", "both"] = "big",
+    std_algo_only: bool = False,
+) -> ReverseResult:
+    """Reverse-engineer an unknown / custom CRC from sample frames.
+
+    Thin wrapper around :func:`crcglot.reverse_packets`.  The newline-
+    separated ``frames_text`` is split into one hex frame per line --
+    each line is a whole captured frame (payload + trailing CRC) -- and
+    decoded to bytes via :func:`parse_hex_bytes` (which strips ``0x``
+    prefixes, ``:`` / ``,`` separators, and whitespace).  Everything
+    about the actual parameter search -- candidate enumeration,
+    ambiguity scoring, catalogue cross-check -- lives in crcglot; we
+    only marshal input and hand back its :class:`ReverseResult`.
+
+    Args:
+        frames_text: Newline-separated hex frames; blank lines ignored.
+            Each non-blank line is payload + trailing CRC, where the
+            last ``crc_bytes`` bytes are the CRC field.
+        crc_bytes: Width of the trailing CRC field in bytes (1 / 2 / 4
+            / 8 -> 8 / 16 / 32 / 64-bit).  ``None`` (the default) lets
+            crcglot search every width.
+        crc_byte_order: Byte order of the trailing CRC field --
+            ``"big"``, ``"little"``, or ``"both"`` to try each.
+        std_algo_only: When ``True``, restrict the search to catalogue
+            algorithms; when ``False`` (the default for this path) allow
+            fully custom parameter sets -- the whole reason this is a
+            separate workflow from :func:`detect_chunk`.
+
+    Returns:
+        crcglot's :class:`ReverseResult` -- ``status``, ``candidates``
+        (each an :class:`AlgorithmInfo` carrying the recovered
+        ``width`` / ``poly`` / ``init`` / ``refin`` / ``refout`` /
+        ``xorout``), ``catalogue_name`` if the recovered parameters
+        happen to match a known algorithm, ``ambiguity_bits`` (how
+        underdetermined the solution is -- more frames drives it
+        toward 0), ``validated_frames``, and a human-readable ``note``.
+
+    Raises:
+        ValueError: No non-blank frames, or a line fails hex decoding.
+    """
+    frames: list[bytes] = [
+        parse_hex_bytes(line) for line in frames_text.splitlines() if line.strip()
+    ]
+    if not frames:
+        raise ValueError("Provide at least one hex frame (one per line).")
+    return reverse_packets(
+        frames,
+        crc_bytes=crc_bytes,
+        crc_byte_order=crc_byte_order,
+        std_algo_only=std_algo_only,
+    )
+
+
 def _human_separator(sep: str) -> str:
     """Name a separator string for display -- keyboard-key words for
     whitespace, literal backtick form for visible punctuation.
@@ -570,117 +636,87 @@ def available_variants_bundle(code: str, widths: list[int]) -> list[str]:
     return result
 
 
-def generate_catalogue(
+def generate_source_files(
     lang: str,
-    names: str | list[str],
+    *,
+    names: str | list[str] | None = None,
+    entry: AlgorithmInfo | None = None,
     variant: str,
     symbol: str,
     comment_style: str = "plain",
-    naming: str = "snake",
-):
-    """Generate code for one or more named catalog algorithms.
+    naming: str | None = None,
+) -> tuple[GeneratedFile, ...]:
+    """Generate ready-to-write source file(s); crcglot owns the filenames.
 
-    Single-algorithm path is byte-for-byte identical to crcglot's
-    single-name generator.  Multi-algorithm path generates each name
-    separately, then feeds the per-algorithm outputs through
-    ``LanguageInfo.combiner`` which deduplicates includes/imports,
-    rewrites self-includes to point at the merged stem, and (for
-    container-style targets like Java) wraps every algorithm's helpers
-    in one class named after ``symbol``.
+    Thin wrapper over :func:`crcglot.generate_files`, which owns both the
+    output filename and the in-code (class / module / function) naming and
+    returns :class:`GeneratedFile` records (``filename`` / ``content`` /
+    ``role``) the caller writes verbatim.  This replaces the old app-side
+    ``f"{symbol}{ext}"`` derivation -- and the single-vs-bundle branching,
+    which ``generate_files`` now handles internally.
+
+    Exactly one of ``names`` (catalog) or ``entry`` (custom) must be given.
+
+    The app's ``symbol`` field maps to crcglot's ``name=`` (single / custom)
+    or ``file_stem=`` (bundle), never ``symbol=``: crcglot's ``symbol=`` is a
+    verbatim escape hatch that *raises* for Java, whereas ``name=`` is the
+    one knob valid in every mode (and cased per target).  A bundle rejects
+    ``name=`` / ``symbol=`` entirely, so the value becomes ``file_stem=``
+    there -- each bundled algorithm keeps its catalogue-derived function
+    name; the value just sets the container / file base.
 
     Args:
         lang: crcglot language code.
         names: One catalog algorithm name (``str``) or several
-            (``list[str]``).  In multi-algorithm mode each algorithm
-            keeps its catalogue-derived function names; ``symbol`` is
-            the file stem only.
-        variant: ``"bitwise"`` / ``"table"`` / ``"slice8"``.  Same
-            variant applied to every algorithm in the bundle.
-        symbol: File basename (and, in single-algo mode, function name).
-        comment_style: Documentation comment style.  ``"plain"`` (default)
-            preserves byte-for-byte the output crcglot emitted before
-            the comment-style feature landed.  See
+            (``list[str]``).  Mutually exclusive with ``entry``.
+        entry: A custom :class:`AlgorithmInfo`.  Mutually exclusive with
+            ``names``.
+        variant: ``"bitwise"`` / ``"table"`` / ``"slice8"``.
+        symbol: The user's basename; routed to crcglot's ``name=`` /
+            ``file_stem=`` as described above.  Empty string -> crcglot's
+            own default base.
+        comment_style: Documentation comment style; see
             :func:`crcglot.comments.styles_for_language` for the codes
-            valid for ``lang``.  In bundle mode the same style is applied
-            to every algorithm; crcglot's combiner does not take a
-            ``comment_style`` kwarg because the style is baked into
-            each per-algorithm output upstream.
+            valid for ``lang``.
+        naming: Naming convention (``"snake"`` / ``"camel"`` / ``"pascal"``)
+            or ``None`` to use the language's default -- the latter is the
+            right choice for targets that don't offer ``snake`` (e.g. Java).
 
     Returns:
-        The generator's output -- a source string for single-file
-        languages, or a ``(header, source)`` tuple for multi-file
-        languages (C).  Multi-algorithm output has the same shape as
-        single-algorithm output for the same language.
+        A tuple of :class:`GeneratedFile`; one entry for single-file
+        languages, two (header + source) for C.
     """
-    info = LANGUAGES[lang]
-    name_list = [names] if isinstance(names, str) else list(names)
-    if len(name_list) == 1:
-        return info.generator(
-            name_list[0],
-            symbol=symbol or None,
+    sym = symbol or None
+    if entry is not None:
+        return generate_files(
+            lang,
+            custom=entry,
             variant=variant,
             comment_style=comment_style,
             naming=naming,
+            name=sym,
         )
-    outputs = [
-        info.generator(
-            n, variant=variant, comment_style=comment_style, naming=naming,
+    if isinstance(names, list) and len(names) > 1:
+        return generate_files(
+            lang,
+            names,
+            variant=variant,
+            comment_style=comment_style,
+            naming=naming,
+            file_stem=sym,
         )
-        for n in name_list
-    ]
-    return info.combiner(outputs, stem=symbol or None)
-
-
-def generate_custom(
-    lang: str,
-    name: str,
-    entry: AlgorithmInfo,
-    variant: str,
-    symbol: str,
-    comment_style: str = "plain",
-    naming: str = "snake",
-):
-    """Generate code from a custom :class:`AlgorithmInfo` instead of a name.
-
-    Args:
-        lang: crcglot language code.
-        name: Logical name for the algorithm (used in comments / function
-            naming when ``symbol`` is empty).
-        entry: The user-built :class:`AlgorithmInfo` describing the CRC
-            parameters.
-        variant: ``"bitwise"`` / ``"table"`` / ``"slice8"``.
-        symbol: Function / file basename to use in the generated code.
-        comment_style: Documentation comment style; ``"plain"`` by
-            default preserves byte-for-byte the pre-styling crcglot
-            output.
-
-    Returns:
-        The generator's output -- shape mirrors :func:`generate_catalogue`.
-    """
-    return LANGUAGES[lang].generator_from_entry(
-        name,
-        entry,
-        symbol=symbol or None,
+    one = names[0] if isinstance(names, list) else names
+    return generate_files(
+        lang,
+        one,
         variant=variant,
         comment_style=comment_style,
         naming=naming,
+        name=sym,
     )
 
 
 # ---------- Format helpers ----------
-
-
-def default_symbol(name: str) -> str:
-    """Convert a catalog algorithm name into a default function/file basename.
-
-    Args:
-        name: Catalog name (e.g. ``"crc16-modbus"``).
-
-    Returns:
-        The same string with hyphens replaced by underscores
-        (e.g. ``"crc16_modbus"``).
-    """
-    return name.replace("-", "_")
 
 
 def alg_label(name: str) -> str:

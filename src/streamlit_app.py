@@ -16,6 +16,7 @@ from ui import (
     render_footer,
     render_gen_tab,
     render_hero,
+    render_recover_tab,
     render_reverse_tab,
     render_seo_meta,
 )
@@ -32,14 +33,23 @@ inject_css()
 render_hero()
 
 
-tab_faq, tab_cat_gen, tab_cust_gen, tab_cat_calc, tab_cust_calc, tab_reverse = st.tabs(
+(
+    tab_faq,
+    tab_cat_gen,
+    tab_cust_gen,
+    tab_cat_calc,
+    tab_cust_calc,
+    tab_reverse,
+    tab_recover,
+) = st.tabs(
     [
         "ℹ️ Show FAQ",
         "⚡ Catalog Code Gen",
         "⚡ Custom Code Gen",
         "🧮 Catalog Calc",
         "🧮 Custom Calc",
-        "🔍 Reverse Lookup",
+        "🔍 Identify",
+        "🧩 Recover Custom",
     ]
 )
 
@@ -60,6 +70,9 @@ with tab_cust_calc:
 
 with tab_reverse:
     render_reverse_tab()
+
+with tab_recover:
+    render_recover_tab()
 
 
 render_footer()

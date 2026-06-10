@@ -16,8 +16,10 @@ What we verify here:
   this to the top of the page.
 - The Catalog Calc gold path: pick ``crc32``, hit Calculate with the
   test vector, see the expected 0xCBF43926 in the code output.
-- The Reverse Lookup gold path in Target mode: payload + target →
+- The Identify gold path in Target mode: payload + target →
   crc32 match.
+- The Recover Custom gold path: several crc32 frames → the recovered
+  algorithm surfaces.
 
 What we deliberately *don't* test here:
 
@@ -41,6 +43,8 @@ from pathlib import Path
 
 import pytest
 from streamlit.testing.v1 import AppTest
+
+from crc_lib import encode_int  # re-exported crcglot.encode_int, for building frames
 
 
 # Locate src/streamlit_app.py relative to this test file so the suite
@@ -67,12 +71,12 @@ def test_app_boots_without_exception(at):
     assert not at.exception, f"app raised: {at.exception}"
 
 
-def test_all_six_tabs_present(at):
+def test_all_seven_tabs_present(at):
     """The flat tab bar shows FAQ, Catalog Code Gen, Custom Code Gen,
-    Catalog Calc, Custom Calc, Reverse Lookup."""
+    Catalog Calc, Custom Calc, Identify, Recover Custom."""
     # Arrange + Act
     actual_count = len(at.tabs)
-    expected_count = 6
+    expected_count = 7
     actual_labels = [tab.label for tab in at.tabs]
     expected_fragments = [
         "FAQ",
@@ -80,10 +84,11 @@ def test_all_six_tabs_present(at):
         "Custom Code Gen",
         "Catalog Calc",
         "Custom Calc",
-        "Reverse Lookup",
+        "Identify",
+        "Recover Custom",
     ]
 
-    # Assert: six tabs, each with the expected emoji + label fragment.
+    # Assert: seven tabs, each with the expected emoji + label fragment.
     assert actual_count == expected_count, (
         f"tab count = {actual_count}, expected {expected_count}; "
         f"labels {actual_labels!r}"
@@ -104,7 +109,8 @@ def test_expected_subheaders_render(at):
         "Generate code",
         "Calculate CRC",
         "Calculate/Verify CRC",
-        "Reverse Lookup",
+        "Identify",
+        "Recover a Custom CRC",
     }
 
     # Act
@@ -181,13 +187,34 @@ def test_catalog_calc_test_vector_produces_check_value(at):
     )
 
 
+def test_calc_shows_round_trip_frame_for_recover(at):
+    """The Calc result includes a copyable 'frame' (payload + big-endian
+    CRC) for pasting into the Recover Custom tab.  For the crc32 test
+    vector that frame is the hex of b"123456789" + 0xCBF43926 -- the
+    round-trip fixture that makes the Recover tab testable by hand.
+    """
+    # Arrange: Catalog Calc, crc32 + test vector (b"123456789").
+    at.checkbox(key="cat_calc_use_tv").set_value(True).run()
+    expected_frame = "31 32 33 34 35 36 37 38 39 cb f4 39 26"
+
+    # Act: click Calculate.
+    at.button(key="cat_calc_go").click().run()
+
+    # Assert: the frame hex appears verbatim in a code block.
+    actual_codes = [c.value for c in at.code]
+    assert any(expected_frame in code for code in actual_codes), (
+        f"expected round-trip frame {expected_frame!r} in code output; "
+        f"got {actual_codes!r}"
+    )
+
+
 # ---------- Reverse Lookup gold path ----------
 
 
 def _find_button_by_label(at: AppTest, label: str):
     """Locate a button by its visible label.
 
-    The Reverse Lookup button doesn't set ``key=``, so we can't use
+    The Identify / Recover buttons don't set ``key=``, so we can't use
     ``at.button(key=...)``.  Match on the label as the next-best stable
     identifier.
     """
@@ -224,7 +251,7 @@ def test_reverse_target_mode_finds_crc32(at):
     expected_alg = "crc32"
 
     # Act: click the (now-enabled) Reverse Lookup button.
-    _find_button_by_label(at, "Reverse Lookup").click().run()
+    _find_button_by_label(at, "Identify").click().run()
 
     # Assert: crc32 appears somewhere in the rendered text.
     actual_text = _rendered_text(at)
@@ -329,14 +356,15 @@ def test_catalog_code_gen_produces_non_empty_c_output(at):
 
 
 def test_catalog_code_gen_bundles_multiple_algorithms_into_one_java_file(at):
-    """Catalog Code Gen with multi-select + Java target should route
-    through crcglot's ``combine_java`` and emit a single ``.java`` file
-    that contains *both* algorithms' helpers inside one container class.
+    """Catalog Code Gen with multi-select + Java target should emit a
+    single ``.java`` file that contains *both* algorithms' helpers inside
+    one container class.
 
-    Regression target for the multi-algorithm path added in crcglot
-    0.12: if the wrapper accidentally fell back to single-algo
-    generation, only the first selected algorithm's functions would
-    appear in the output and `crc16_modbus_init` would be missing.
+    Regression target for the multi-algorithm path: if generation fell
+    back to single-algo, only the first algorithm's functions would
+    appear and `crc16ModbusInit` would be missing.  Java methods are
+    camelCase and crcglot PascalCases the class from the stem (`MyCrcs`
+    -> container `Mycrcs`).
     """
     # Arrange: switch the catalog gen picker to a 2-algo bundle, pick
     # Java, type a container/file stem, and click Generate.
@@ -345,8 +373,9 @@ def test_catalog_code_gen_bundles_multiple_algorithms_into_one_java_file(at):
     ).run()
     at.segmented_control(key="cat_gen_lang").set_value("java").run()
     at.text_input(key="cat_gen_symbol").set_value("MyCrcs").run()
-    expected_class = "public final class MyCrcs"
-    expected_methods = ("crc32_init", "crc16_modbus_init")
+    # crcglot PascalCases the stem (lowercasing the tail): MyCrcs -> Mycrcs.
+    expected_class = "public final class Mycrcs"
+    expected_methods = ("crc32Init", "crc16ModbusInit")
 
     # Act
     at.button(key="cat_gen_go").click().run()
@@ -419,7 +448,7 @@ def test_reverse_no_match_shows_warning(at):
     expected_warning_fragment = "No catalog algorithm"
 
     # Act
-    _find_button_by_label(at, "Reverse Lookup").click().run()
+    _find_button_by_label(at, "Identify").click().run()
 
     # Assert: an st.warning with the no-match explanation appears.
     actual_warnings = [w.value for w in at.warning if w.value]
@@ -444,13 +473,76 @@ def test_reverse_text_end_of_data_mode_finds_crc32(at):
     expected_alg = "crc32"
 
     # Act
-    _find_button_by_label(at, "Reverse Lookup").click().run()
+    _find_button_by_label(at, "Identify").click().run()
 
     # Assert: text-mode end-of-data should surface the crc32 match.
     actual_text = _rendered_text(at)
     assert expected_alg in actual_text, (
         f"end-of-data text-mode Reverse Lookup should surface "
         f"{expected_alg!r}; rendered excerpt: {actual_text[:300]!r}"
+    )
+
+
+def test_recover_custom_finds_crc32_from_sample_frames(at):
+    """Feed the Recover Custom tab several crc32 frames (payload + 4-byte
+    big-endian CRC) and confirm the app surfaces the recovered algorithm.
+
+    This proves the ``render_recover_tab`` -> ``recover_packets`` ->
+    ``crcglot.reverse_packets`` wiring for one path; crcglot owns the
+    recovery's own correctness via its test suite.  Frames are built
+    from a known algorithm so the recovered answer is predictable.
+    """
+    # Arrange: build crc32 frames (payload + big-endian 4-byte CRC).  Leave
+    # the CRC width on its "All widths" default (crc_bytes=None) so this also
+    # covers the search-every-width path.
+    payloads = [b"123456789", b"hello world", bytes([0xDE, 0xAD, 0xBE, 0xEF])]
+    frames = "\n".join(
+        (p + encode_int(p, "crc32").to_bytes(4, "big")).hex() for p in payloads
+    )
+    at.text_area(key="rec_frames").set_value(frames).run()
+    expected_alg = "crc32"
+
+    # Act: click the (now-enabled) Recover CRC button.
+    _find_button_by_label(at, "Recover CRC").click().run()
+
+    # Assert: the recovered algorithm surfaces in the result text
+    # (success note / catalogue-match info), and no exception was raised.
+    rendered = "\n".join(
+        [m.value for m in at.markdown if m.value]
+        + [c.value for c in at.caption if c.value]
+        + [s.value for s in at.success if s.value]
+        + [i.value for i in at.info if i.value]
+    )
+    assert not at.exception, f"Recover Custom raised: {at.exception}"
+    assert expected_alg in rendered, (
+        f"Recover Custom should surface {expected_alg!r}; "
+        f"rendered excerpt: {rendered[:300]!r}"
+    )
+
+
+def test_recover_no_match_with_all_widths_renders_warning_not_crash(at):
+    """The no-candidate path on the default 'All widths' (crc_bytes=None)
+    must render the no-match warning, not raise.
+
+    Regression target: the width hint in the no-match branch used to do
+    ``rec_crc_bytes * 8`` unconditionally, which threw ``TypeError`` when
+    the width was left on its ``None`` ("All widths") default.
+    """
+    # Arrange: frames whose trailing bytes aren't a real CRC, default width
+    # ("All"), restricted to catalogue so there are deliberately no matches.
+    at.text_area(key="rec_frames").set_value(
+        "31 32 33 34 de ad be ef\n61 62 63 64 ca fe ba be"
+    ).run()
+    at.checkbox(key="rec_std_only").set_value(True).run()
+
+    # Act
+    _find_button_by_label(at, "Recover CRC").click().run()
+
+    # Assert: no exception, and the no-match warning rendered.
+    assert not at.exception, f"Recover no-match path raised: {at.exception}"
+    actual_warnings = [w.value for w in at.warning if w.value]
+    assert any("No CRC parameters fit" in w for w in actual_warnings), (
+        f"expected a no-match warning on the All-widths path; got {actual_warnings!r}"
     )
 
 

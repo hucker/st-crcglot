@@ -36,7 +36,7 @@ from crc_lib import (
     available_variants,
     available_variants_bundle,
     detect_chunk,
-    generate_catalogue,
+    generate_source_files,
     padding_pills,
     parse_hex,
     parse_hex_bytes,
@@ -699,102 +699,124 @@ class TestAvailableVariantsBundle:
         )
 
 
-# ---------- generate_catalogue: multi-algorithm bundling ----------
+# ---------- generate_source_files: multi-algorithm bundling ----------
 #
-# crcglot 0.12 added a per-language combiner that merges N single-algo
-# outputs into one file.  Our wrapper auto-routes through it when a
-# list is passed.
+# crcglot's `generate_files` owns the single-vs-bundle dispatch and the
+# output filenames/roles; our `generate_source_files` wrapper just maps
+# the app's `symbol` to crcglot's `name=`/`file_stem=` and forwards.
 
 
 class TestGenerateCatalogueBundle:
-    """Single-vs-list dispatch and per-language combiner shape."""
+    """Single-vs-bundle dispatch and per-language file shape (GeneratedFile)."""
 
-    def test_single_name_returns_string_for_java(self):
-        # Arrange: Java single-algo wraps methods in a fixed `CrcGlot`
-        # container class (the `symbol=` parameter becomes the method
-        # name prefix, not the class name -- only the multi-algo
-        # combiner names the container from the file stem).
+    def test_single_java_file_matches_its_class_name(self):
+        # Arrange: Java single-algo emits one GeneratedFile whose filename
+        # stem IS the public class name -- the invariant Java needs to
+        # compile.  The app's `symbol` maps to crcglot's name= (cased per
+        # target), so we assert the file==class relationship and that
+        # methods are named from it, not a guessed casing.
         symbol = "MyCrc32"
 
         # Act
-        actual = generate_catalogue("java", "crc32", "bitwise", symbol)
+        files = generate_source_files(
+            "java", names="crc32", variant="bitwise", symbol=symbol
+        )
 
-        # Assert: string with the default container class plus methods
-        # named after the symbol prefix.
-        assert isinstance(actual, str), (
-            f"java single-algo should be str; got {type(actual).__name__}"
+        # Assert: exactly one .java file declaring its matching class.
+        assert len(files) == 1, (
+            f"java single-algo should yield one file; got {len(files)}"
         )
-        assert "public final class CrcGlot" in actual, (
-            f"java single-algo output should wrap in the default CrcGlot "
-            f"container class; first 300 chars: {actual[:300]!r}"
+        gf = files[0]
+        assert gf.filename.endswith(".java"), (
+            f"java output should be a .java file; got {gf.filename!r}"
         )
-        assert f"{symbol}_init" in actual and f"{symbol}_update" in actual, (
-            f"symbol={symbol!r} should become the method-name prefix "
-            f"(expected '{symbol}_init' / '{symbol}_update')"
+        stem = gf.filename.removesuffix(".java")
+        assert f"public final class {stem}" in gf.content, (
+            f"filename {gf.filename!r} must match the public class it "
+            f"declares (Java requires file==class to compile); content "
+            f"head: {gf.content[:300]!r}"
+        )
+        method_base = stem[0].lower() + stem[1:]
+        assert f"{method_base}Init" in gf.content, (
+            f"methods should be named from the symbol (expected "
+            f"'{method_base}Init'); content head: {gf.content[:300]!r}"
         )
 
     def test_list_of_one_matches_single_name(self):
         # Arrange: ["crc32"] and "crc32" should round-trip to the same
-        # bytes -- single-algo path bypasses the combiner entirely.
+        # GeneratedFile tuple -- a 1-element list takes the single path.
 
         # Act
-        actual_single = generate_catalogue("java", "crc32", "bitwise", "Crc32")
-        actual_listed = generate_catalogue("java", ["crc32"], "bitwise", "Crc32")
+        actual_single = generate_source_files(
+            "java", names="crc32", variant="bitwise", symbol="Crc32"
+        )
+        actual_listed = generate_source_files(
+            "java", names=["crc32"], variant="bitwise", symbol="Crc32"
+        )
 
-        # Assert: byte-for-byte identical.
+        # Assert: identical (GeneratedFile is a frozen dataclass).
         assert actual_single == actual_listed, (
             "single-name and single-element-list paths should produce "
-            "identical output (single-algo bypass of the combiner)"
+            "identical output"
         )
 
     def test_java_bundle_wraps_in_one_container_class(self):
-        # Arrange: two algos bundled into one Java file -- crcglot's
-        # combine_java wraps everything in a single public final class
-        # named from the stem, with both algorithms' helpers inside.
+        # Arrange: two algos bundled into one Java file -- crcglot wraps
+        # everything in a single public final class named from the stem,
+        # with both algorithms' (camelCased) helpers inside.
         names = ["crc32", "crc16-modbus"]
 
         # Act
-        actual = generate_catalogue("java", names, "bitwise", "MyCrcs")
+        files = generate_source_files(
+            "java", names=names, variant="bitwise", symbol="MyCrcs"
+        )
 
-        # Assert: one container class, both algorithms' init methods
-        # present, classname matches the stem.
-        assert isinstance(actual, str), (
-            f"java bundle should be str; got {type(actual).__name__}"
+        # Assert: one file; filename==class; both algorithms present.
+        assert len(files) == 1, (
+            f"java bundle should be one file; got {len(files)}"
         )
-        assert "public final class MyCrcs" in actual, (
-            "java bundle should wrap algorithms in one container class "
-            "named from the stem"
+        gf = files[0]
+        stem = gf.filename.removesuffix(".java")
+        assert f"public final class {stem}" in gf.content, (
+            f"java bundle file {gf.filename!r} must match its container "
+            f"class; content head: {gf.content[:300]!r}"
         )
-        assert "crc32_init" in actual and "crc16_modbus_init" in actual, (
+        assert "crc32Init" in gf.content and "crc16ModbusInit" in gf.content, (
             f"bundle should keep both algorithms' catalogue-derived "
-            f"function names; got methods starting with: "
-            f"{[ln.strip() for ln in actual.split(chr(10)) if 'public static' in ln][:6]!r}"
+            f"(camelCased) function names; methods found: "
+            f"{[ln.strip() for ln in gf.content.split(chr(10)) if 'public static' in ln][:6]!r}"
         )
 
-    def test_c_bundle_returns_header_source_tuple(self):
-        # Arrange: C generator emits (.h, .c).  Multi-algo combine_c
-        # preserves that shape -- one merged header, one merged source.
+    def test_c_bundle_returns_header_and_source_files(self):
+        # Arrange: C emits two GeneratedFiles -- a header and a source --
+        # tagged by `role` and named from the stem.
         names = ["crc32", "crc16-modbus"]
 
         # Act
-        actual = generate_catalogue("c", names, "bitwise", "mycrcs")
+        files = generate_source_files(
+            "c", names=names, variant="bitwise", symbol="mycrcs"
+        )
 
-        # Assert: 2-tuple of non-empty strings.
-        assert isinstance(actual, tuple) and len(actual) == 2, (
-            f"C bundle should be a 2-tuple; got {type(actual).__name__} len "
-            f"{len(actual) if isinstance(actual, tuple) else 'n/a'}"
+        # Assert: header + source, correctly named, source includes header once.
+        actual_roles = {f.role for f in files}
+        assert actual_roles == {"header", "source"}, (
+            f"C bundle should yield header+source roles; got "
+            f"{[(f.filename, f.role) for f in files]!r}"
         )
-        header, source = actual
-        assert header and source, (
-            f"C bundle pieces should both be non-empty; got header={len(header)}, "
-            f"source={len(source)}"
+        by_role = {f.role: f for f in files}
+        assert by_role["header"].filename == "mycrcs.h", (
+            f"header filename should be 'mycrcs.h'; got "
+            f"{by_role['header'].filename!r}"
         )
-        # The merged source should #include the bundle stem header
-        # exactly once -- crcglot's combine_c rewrites the per-algo
-        # self-includes to point at the merged header.
+        assert by_role["source"].filename == "mycrcs.c", (
+            f"source filename should be 'mycrcs.c'; got "
+            f"{by_role['source'].filename!r}"
+        )
+        source = by_role["source"].content
+        # crcglot rewrites per-algo self-includes to the one merged header.
         assert source.count('#include "mycrcs.h"') == 1, (
-            f"merged C source should #include the bundle stem header "
-            f"exactly once; got {source.count('#include "mycrcs.h"')}"
+            f"merged C source should #include the stem header exactly "
+            f"once; got {source.count('#include "mycrcs.h"')}"
         )
 
 
@@ -866,8 +888,8 @@ class TestLanguageInfoStyles:
 # ---------- generate_catalogue: comment_style threading ----------
 #
 # The new `comment_style` kwarg landed on each per-language generator
-# in crcglot 0.13; we forward it through `generate_catalogue` and
-# `generate_custom`.  Tests pin (a) byte-identity of the default path
+# in crcglot 0.13; we forward it through `generate_source_files`.
+# Tests pin (a) byte-identity of the default path
 # so existing callers keep working, (b) the kwarg actually reaches the
 # generator (style-specific marker appears in output), (c) crcglot's
 # validation errors propagate.
@@ -883,9 +905,11 @@ class TestGenerateCatalogueCommentStyle:
         # drifts to e.g. "doxygen" silently, this test catches it.
 
         # Act
-        actual_omitted = generate_catalogue("c", "crc32", "bitwise", "crc32")
-        actual_explicit_plain = generate_catalogue(
-            "c", "crc32", "bitwise", "crc32", comment_style="plain"
+        actual_omitted = generate_source_files(
+            "c", names="crc32", variant="bitwise", symbol="crc32"
+        )
+        actual_explicit_plain = generate_source_files(
+            "c", names="crc32", variant="bitwise", symbol="crc32", comment_style="plain"
         )
 
         # Assert: byte-for-byte identical output.
@@ -902,12 +926,14 @@ class TestGenerateCatalogueCommentStyle:
         marker = "@param"
 
         # Act
-        header_plain, _ = generate_catalogue(
-            "c", "crc32", "bitwise", "crc32", comment_style="plain"
+        plain = generate_source_files(
+            "c", names="crc32", variant="bitwise", symbol="crc32", comment_style="plain"
         )
-        header_doxygen, _ = generate_catalogue(
-            "c", "crc32", "bitwise", "crc32", comment_style="doxygen"
+        doxygen = generate_source_files(
+            "c", names="crc32", variant="bitwise", symbol="crc32", comment_style="doxygen"
         )
+        header_plain = next(f for f in plain if f.role == "header").content
+        header_doxygen = next(f for f in doxygen if f.role == "header").content
 
         # Assert: marker absent in plain, present in doxygen.  The
         # before/after differential is what proves our wrapper actually
@@ -933,9 +959,9 @@ class TestGenerateCatalogueCommentStyle:
         marker = "Parameters\n    ----------"
 
         # Act
-        actual = generate_catalogue(
-            "python", "crc32", "bitwise", "crc32", comment_style="numpy"
-        )
+        actual = generate_source_files(
+            "python", names="crc32", variant="bitwise", symbol="crc32", comment_style="numpy"
+        )[0].content
 
         # Assert: numpydoc underline present at least once (it appears
         # once per function that takes parameters).
@@ -956,8 +982,12 @@ class TestGenerateCatalogueCommentStyle:
         # Act + Assert: ValueError from crcglot reaches the caller
         # unchanged (no broad-except in `generate_catalogue`).
         with pytest.raises(ValueError, match="doxygen"):
-            generate_catalogue(
-                "rust", "crc32", "bitwise", "crc32", comment_style="doxygen"
+            generate_source_files(
+                "rust",
+                names="crc32",
+                variant="bitwise",
+                symbol="crc32",
+                comment_style="doxygen",
             )
 
     def test_comment_style_applies_uniformly_across_bundled_algorithms(self):
@@ -970,13 +1000,14 @@ class TestGenerateCatalogueCommentStyle:
 
         # Act: bundle two algorithms with doxygen style; @param should
         # appear at least twice (once per algorithm's doc blocks).
-        header, _ = generate_catalogue(
+        files = generate_source_files(
             "c",
-            ["crc32", "crc16-modbus"],
-            "bitwise",
-            "mycrcs",
+            names=["crc32", "crc16-modbus"],
+            variant="bitwise",
+            symbol="mycrcs",
             comment_style="doxygen",
         )
+        header = next(f for f in files if f.role == "header").content
 
         # Assert: marker count at least matches the algorithm count.
         # If we forwarded style only to the first call (single-algo
