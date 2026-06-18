@@ -16,11 +16,12 @@ import subprocess
 import tomllib
 from importlib.metadata import PackageNotFoundError, version as pkg_version
 from pathlib import Path
-from typing import Literal
+from typing import Literal, NamedTuple
 
 from crcglot import (
     ALGORITHMS,
     AlgorithmInfo,
+    Crc,  # noqa: F401  -- re-exported through ui.py
     CrcStream,  # noqa: F401  -- re-exported through ui.py
     GeneratedFile,
     LANGUAGES,
@@ -32,6 +33,7 @@ from crcglot import (
     encode_int,
     generate_files,
     generic_crc,
+    identify_trailer,
     naming_info,  # noqa: F401  -- re-exported through ui.py
     reverse_packets,
     variant_info,
@@ -51,6 +53,7 @@ __all__ = [
     "ACKNOWLEDGMENTS",
     "ALGORITHMS",
     "AlgorithmInfo",
+    "Crc",
     "LANGUAGES",
     "REPO_URL",
     "APP_ROOT",
@@ -68,6 +71,9 @@ __all__ = [
     "parse_hex",
     "parse_hex_bytes",
     "detect_chunk",
+    "identify_trailer_chunk",
+    "TrailerCandidate",
+    "TrailerReadout",
     "recover_packets",
     "padding_pills",
     "variant_info",
@@ -432,6 +438,117 @@ def detect_chunk(
     ]
 
 
+class TrailerCandidate(NamedTuple):
+    """One identified trailing-field match, reshaped from crcglot's
+    :class:`TrailerMatch` for the renderer.
+
+    ``kind`` is ``"checksum"`` or ``"digest"`` (crcglot 0.20+ recognises
+    cryptographic digests alongside non-CRC checksums).  ``value`` is the
+    field read back as an int for hex/binary input (``None`` for text
+    framing).  ``truncated_to`` is the byte count when the match is a
+    leading truncation of a longer digest (e.g. base58check's
+    ``sha256d[:4]``), else ``None``.
+    """
+
+    name: str
+    label: str
+    width: int
+    endianness: str
+    value: int | None
+    description: str
+    kind: str
+    truncated_to: int | None
+
+
+class TrailerReadout(NamedTuple):
+    """What :func:`identify_trailer_chunk` returns: the ordered candidates
+    plus crcglot's result-level ``note`` -- e.g. the "matched no unkeyed
+    digest; could be a MAC" heads-up for a digest-sized field that nothing
+    matched.  ``note`` is ``""`` when crcglot has nothing extra to say.
+    """
+
+    candidates: list[TrailerCandidate]
+    note: str
+
+
+def identify_trailer_chunk(
+    chunk: str,
+    mode: DetectMode | None = None,
+) -> TrailerReadout:
+    """Identify a non-CRC checksum or digest in a chunk's trailing field.
+
+    Thin wrapper around :func:`crcglot.identify_trailer`, used by the
+    Identify tab's end-of-data path to give an affirmative answer ("this
+    *is* a SHA-256 / an Adler-32 / ...") when CRC detection finds nothing,
+    instead of a static list of possibilities.  crcglot owns the whole
+    trailer catalogue (non-CRC checksums *and* cryptographic digests) and
+    the matching; we only reshape its :class:`TrailerMatch` records and
+    surface its result-level note for the renderer.
+
+    The detection is opportunistic, not exhaustive: crcglot spots the
+    common digest/checksum families that are cheap to recognise from the
+    trailing bytes, not every conceivable packet trailer.
+
+    Args:
+        chunk: The packet -- payload plus its trailing field.
+        mode: ``"text"`` (literal payload + trailing hex field) or
+            ``"hex"`` (whole input is hex-encoded bytes).  ``None`` infers
+            from type: ``str`` -> ``"text"``, ``bytes`` -> ``"binary"``.
+
+    Returns:
+        A :class:`TrailerReadout` -- ``candidates`` in crcglot's order plus
+        the result-level ``note``.  Each candidate's ``value`` is the
+        trailing field read back as an integer when it sits literally in the
+        decoded bytes (``hex`` / ``binary`` mode); it is ``None`` for
+        ``text``-framed input, because crcglot doesn't expose the matched
+        value on :class:`TrailerMatch` and recovering it would mean
+        re-implementing crcglot's text framing here.  ``candidates`` is
+        empty when nothing matched (``note`` may still carry a hint).
+    """
+    if mode is None:
+        mode = "text" if isinstance(chunk, str) else "binary"
+    result = identify_trailer(chunk, mode=mode)
+    note = result.note or ""
+    if not result.candidates:
+        return TrailerReadout(candidates=[], note=note)
+
+    # The trailing field is literally present in the decoded bytes only for
+    # hex / binary input; read it back for display.  Text framing
+    # (data <sep> hexcrc) would need crcglot's parser to split, so value
+    # stays None there rather than duplicating that logic app-side.
+    data: bytes | None = None
+    if mode == "hex":
+        try:
+            data = parse_hex_bytes(chunk)
+        except ValueError:
+            data = None
+    elif mode == "binary" and isinstance(chunk, (bytes, bytearray)):
+        data = bytes(chunk)
+
+    out: list[TrailerCandidate] = []
+    for cand in result.candidates:
+        nbytes = (cand.info.width + 7) // 8
+        value: int | None = None
+        if data is not None and len(data) >= nbytes:
+            order: Literal["big", "little"] = (
+                "little" if cand.endianness == "little" else "big"
+            )
+            value = int.from_bytes(data[-nbytes:], order)
+        out.append(
+            TrailerCandidate(
+                name=cand.name,
+                label=cand.info.label,
+                width=cand.info.width,
+                endianness=cand.endianness,
+                value=value,
+                description=cand.info.description,
+                kind=cand.info.kind,
+                truncated_to=cand.truncated_to,
+            )
+        )
+    return TrailerReadout(candidates=out, note=note)
+
+
 def recover_packets(
     frames_text: str,
     *,
@@ -657,13 +774,14 @@ def generate_source_files(
 
     Exactly one of ``names`` (catalog) or ``entry`` (custom) must be given.
 
-    The app's ``symbol`` field maps to crcglot's ``name=`` (single / custom)
-    or ``file_stem=`` (bundle), never ``symbol=``: crcglot's ``symbol=`` is a
-    verbatim escape hatch that *raises* for Java, whereas ``name=`` is the
-    one knob valid in every mode (and cased per target).  A bundle rejects
-    ``name=`` / ``symbol=`` entirely, so the value becomes ``file_stem=``
-    there -- each bundled algorithm keeps its catalogue-derived function
-    name; the value just sets the container / file base.
+    The app's ``symbol`` field always maps to crcglot's ``name=``, never
+    ``symbol=``: crcglot's ``symbol=`` is a verbatim escape hatch that
+    *raises* for Java, whereas ``name=`` is the single knob valid in every
+    mode (single / custom / bundle) and cased per target.  For a single
+    algorithm or custom CRC it sets the function name; for a bundle it sets
+    the file stem (and, for Java / C#, the container class), while each
+    bundled algorithm keeps its catalogue-derived function name.  (crcglot
+    0.19 folded the old ``file_stem=`` bundle parameter into ``name=``.)
 
     Args:
         lang: crcglot language code.
@@ -703,7 +821,7 @@ def generate_source_files(
             variant=variant,
             comment_style=comment_style,
             naming=naming,
-            file_stem=sym,
+            name=sym,
         )
     one = names[0] if isinstance(names, list) else names
     return generate_files(

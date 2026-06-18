@@ -18,6 +18,7 @@ from crc_lib import (
     ACKNOWLEDGMENTS,
     ALGORITHMS,
     AlgorithmInfo,
+    Crc,
     CALC_KEY,
     LANGUAGES,
     NAMING_ORDER,
@@ -35,6 +36,7 @@ from crc_lib import (
     crcglot_version,
     default_stem,
     detect_chunk,
+    identify_trailer_chunk,
     encode_int,
     generate_source_files,
     generic_crc,
@@ -315,7 +317,10 @@ def _auto_check_value(key_prefix: str, seed: AlgorithmInfo) -> str | None:
     )
     if pe or ie or xe or poly is None or init is None or xorout is None:
         return None
-    crc = generic_crc(b"123456789", w, poly, init, refin, refout, xorout)
+    crc = generic_crc(
+        b"123456789",
+        Crc(width=w, poly=poly, init=init, refin=refin, refout=refout, xorout=xorout),
+    )
     return f"0x{crc:0{(w + 3) // 4}X}"
 
 
@@ -720,15 +725,7 @@ def render_test_vector_display(
     # registered name to defer to).  Catalog path: entry.check IS the
     # test-vector CRC by definition -- no compute, just display it.
     if is_custom:
-        value = generic_crc(
-            b"123456789",
-            entry.width,
-            entry.poly,
-            entry.init,
-            entry.refin,
-            entry.refout,
-            entry.xorout,
-        )
+        value = generic_crc(b"123456789", entry)
     else:
         value = entry.check
     formatted = f"0x{value:0{nibbles}X}"
@@ -1390,15 +1387,7 @@ def render_calculate_section(
         if name is not None and name in ALGORITHMS:
             value = encode_int(data, name)
         else:
-            value = generic_crc(
-                data,
-                entry.width,
-                entry.poly,
-                entry.init,
-                entry.refin,
-                entry.refout,
-                entry.xorout,
-            )
+            value = generic_crc(data, entry)
         total_bytes = len(data)
 
     nibbles = (entry.width + 3) // 4
@@ -1952,16 +1941,85 @@ def render_reverse_tab() -> None:
                 if info.desc:
                     st.caption(info.desc)
         else:
-            st.warning(
-                f"No catalog algorithm produces {no_match_target_display} "
-                f"for this input.\n\n"
-                "Common reasons:\n"
-                "- Custom polynomial (not in the reveng catalogue)\n"
-                "- Input bytes don't exactly match the captured payload "
-                "(extra/missing header bytes, trailing checksum included, etc.)\n"
-                "- The checksum isn't a CRC (could be Adler-32, Fletcher, "
-                "truncated hash, etc.)"
-            )
+            # Before the generic "couldn't match" fallback, ask crcglot
+            # whether the trailing field is a (non-CRC) checksum or a
+            # cryptographic digest -- an affirmative "this IS a SHA-256 /
+            # an Adler-32" beats a static list of maybes.  Only meaningful
+            # in end-of-data mode (Target mode has no trailing field to
+            # peel).  Never let it break the panel.
+            try:
+                readout = (
+                    identify_trailer_chunk(rev_text, mode=detect_mode)
+                    if end_of_data
+                    else None
+                )
+            except Exception:
+                readout = None
+
+            cands = readout.candidates if readout else []
+            note = readout.note if readout else ""
+
+            if cands:
+                kinds = {c.kind for c in cands}
+                noun = (
+                    "a cryptographic digest"
+                    if kinds == {"digest"}
+                    else "a checksum"
+                    if kinds == {"checksum"}
+                    else "a checksum or digest"
+                )
+                labels = " or ".join(f"**{c.label}**" for c in cands)
+                st.warning(
+                    "Not a CRC — crcglot identifies the trailing field as "
+                    f"{noun}: {labels}.",
+                    icon=":material/info:",
+                )
+                for c in cands:
+                    # A digest is 128+ bits; its full value is too long for a
+                    # badge, so inline the value only for the narrow checksum
+                    # case (where seeing the bytes is actually useful).
+                    title = (
+                        f"{c.label}: 0x{c.value:0{(c.width + 3) // 4}X}"
+                        if c.value is not None and c.kind == "checksum"
+                        else c.label
+                    )
+                    with st.container(horizontal=True, gap="small"):
+                        st.badge(title, color="orange")
+                        st.badge(c.kind.capitalize(), color="gray")
+                        st.badge(f"Width: {c.width}", color="gray")
+                        if c.width > 8:
+                            st.badge(
+                                f"Endian: {c.endianness.capitalize()}", color="gray"
+                            )
+                        if c.truncated_to is not None:
+                            st.badge(
+                                f"Truncated to {c.truncated_to} bytes", color="gray"
+                            )
+                    if c.description:
+                        st.caption(c.description)
+                if note:
+                    st.caption(note)
+                st.caption(
+                    "Neither a checksum nor a digest has a polynomial, so "
+                    "crcglot can't match or generate it as a CRC -- this is a "
+                    "heads-up only.  crcglot spots the common digest (MD5, the "
+                    "SHA families, BLAKE2) and checksum trailers that are cheap "
+                    "to recognise; it's an opportunistic convenience, not an "
+                    "exhaustive packet classifier."
+                )
+            else:
+                st.warning(
+                    f"No catalog algorithm produces {no_match_target_display} "
+                    f"for this input.\n\n"
+                    "Common reasons:\n"
+                    "- Custom polynomial (not in the reveng catalogue)\n"
+                    "- Input bytes don't exactly match the captured payload "
+                    "(extra/missing header bytes, trailing checksum included, "
+                    "etc.)\n"
+                    "- A checksum crcglot doesn't recognise, or a truncated hash"
+                )
+                if note:
+                    st.caption(note)
 
 
 def render_recover_tab() -> None:
