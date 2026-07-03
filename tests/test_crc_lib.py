@@ -395,6 +395,36 @@ class TestPaddingPills:
                 f"pill help should be str; got {type(help_md).__name__}"
             )
 
+    def test_form_match_yields_single_form_pill(self):
+        # Arrange: a crclink JSON frame.  crcglot 0.23+ recognises the
+        # wrapper and rides a FormatMatch on the candidate's padding (not
+        # the TextFormat / HexFormat a bare trailing CRC gets), so our
+        # wrapper must name the form and drop the trailing-hex pills.
+        hits = detect_chunk('{"t":1234,"v":42,"crc":"1352"}', mode="text")
+        assert hits, "expected detect_chunk to recognise the crclink frame"
+        _, _, _, padding = hits[0]
+
+        # Act
+        actual_pills = padding_pills(padding)
+        actual_labels = [label for label, _help in actual_pills]
+
+        # Assert: exactly one pill, naming the form (label comes from
+        # crcglot's FormatInfo, so we check identity not exact wording),
+        # and none of the Sep / Prefix / Hex boundary pills -- a form match
+        # has no trailing-hex boundary for them to describe.
+        assert len(actual_labels) == 1, (
+            f"a form match should yield one pill; got {actual_labels!r}"
+        )
+        assert (
+            actual_labels[0].startswith("Form: ") and "crclink" in actual_labels[0]
+        ), f"the pill should name the crclink form; got {actual_labels[0]!r}"
+        suppressed = [
+            lbl for lbl in actual_labels if lbl.startswith(("Sep:", "Prefix:", "Hex:"))
+        ]
+        assert not suppressed, (
+            f"a form match should suppress the trailing-hex pills; got {suppressed!r}"
+        )
+
 
 # ---------- detect_chunk ----------
 #

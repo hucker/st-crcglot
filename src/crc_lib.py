@@ -16,7 +16,7 @@ import subprocess
 import tomllib
 from importlib.metadata import PackageNotFoundError, version as pkg_version
 from pathlib import Path
-from typing import Literal, NamedTuple
+from typing import TYPE_CHECKING, Literal, NamedTuple
 
 from crcglot import (
     ALGORITHMS,
@@ -40,13 +40,28 @@ from crcglot import (
 )
 from crcglot.comments import style_info
 
-# Optional / newer symbol -- isolated so a missing or stale crcglot can't
+# Optional / newer symbols -- isolated so a missing or stale crcglot can't
 # crash the whole app at import time.  Empty tuple = FAQ credits section
 # is omitted; everything else keeps working.
 try:
     from crcglot import ACKNOWLEDGMENTS
 except ImportError:
     ACKNOWLEDGMENTS = ()
+
+# crcglot 0.23+ recognises CRC-bearing payload forms (e.g. crclink JSON
+# frames); a matched form rides on a DetectMatch's ``padding`` as a
+# FormatMatch.  Guarded so an older crcglot just skips the form pill -- the
+# empty-tuple fallback makes ``isinstance(x, FormatMatch)`` always False, so
+# padding_pills falls through to its TextFormat / HexFormat handling.  The
+# type checker takes the real import (so isinstance narrows ``padding`` to a
+# FormatMatch); only the runtime path carries the fallback.
+if TYPE_CHECKING:
+    from crcglot import FormatMatch
+else:
+    try:
+        from crcglot import FormatMatch
+    except ImportError:
+        FormatMatch = ()
 
 # crcglot symbols re-exported so ui.py only needs to import from crc_lib.
 __all__ = [
@@ -648,15 +663,32 @@ def padding_pills(padding: object | None) -> list[tuple[str, str]]:
     Args:
         padding: The ``padding`` attribute of a ``DetectMatch`` --
             ``TextFormat`` (text mode), ``HexFormat`` (hex-text auto-decode
-            mode), or ``None`` (binary mode).
+            mode), ``FormatMatch`` (a recognised payload form, crcglot 0.23+),
+            or ``None`` (binary mode).
 
     Returns:
-        A list of ``(label, help_markdown)`` tuples in render order:
-        separator, then prefix (when present), then case.  Empty list when
-        there's nothing to describe.
+        A list of ``(label, help_markdown)`` tuples in render order.  For a
+        recognised payload form, a single ``Form: ...`` pill.  Otherwise:
+        separator, then prefix (when present), then hex case.  Empty list
+        when there's nothing to describe.
     """
     if padding is None:
         return []
+
+    # A recognised payload form (crcglot 0.23+): the CRC was wrapped in a
+    # named text/JSON form (e.g. crclink), not appended as a bare tail.  The
+    # separator / prefix / hex-case pills describe a trailing-hex boundary
+    # that a form match doesn't have, so name the form instead and stop.
+    # Label and copy come straight off crcglot's FormatInfo -- the form
+    # catalogue is crcglot's to own, not a table here.
+    if isinstance(padding, FormatMatch):
+        return [
+            (
+                f"Form: {padding.info.label}",
+                f"`detect()` recognised this CRC inside a named payload "
+                f"form, not as a bare trailing field.\n\n{padding.info.description}",
+            )
+        ]
 
     pills: list[tuple[str, str]] = []
 
